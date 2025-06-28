@@ -17,6 +17,7 @@ import {
   Menu,
   Wifi,
   WifiOff,
+  Square,
 } from "lucide-react"
 import { OnboardingForm } from "@/components/onboarding-form"
 import { FollowUpModal } from "@/components/follow-up-modal"
@@ -26,6 +27,10 @@ import { getGoogleMapsConfig, generateStreetViewUrl } from "@/lib/maps-server"
 import { offlineStorage } from "@/lib/offline-storage"
 import { usePWA } from "@/hooks/use-pwa"
 import { toast } from "@/hooks/use-toast"
+import { TerritoryManager } from "@/components/territory-manager"
+import { TerritoryForm } from "@/components/territory-form"
+import { territoryStorage, type Territory } from "@/lib/territory-storage"
+import { getTerritoriesContainingPoint } from "@/lib/turf-utils"
 
 interface Pin {
   id: string
@@ -102,6 +107,16 @@ export default function PulseChainEducationTracker() {
   const [followUps, setFollowUps] = useState<FollowUpData[]>([])
   const [showMobileMenu, setShowMobileMenu] = useState(false)
 
+  const [territories, setTerritories] = useState<Territory[]>([])
+  const [territoryPolygons, setTerritoryPolygons] = useState<any[]>([])
+  const [visibleTerritories, setVisibleTerritories] = useState<Set<string>>(new Set())
+  const [showTerritoryManager, setShowTerritoryManager] = useState(false)
+  const [showTerritoryForm, setShowTerritoryForm] = useState(false)
+  const [pendingTerritoryCoords, setPendingTerritoryCoords] = useState<Array<{ lat: number; lng: number }>>([])
+  const [drawingManager, setDrawingManager] = useState<any>(null)
+  const [isDrawingMode, setIsDrawingMode] = useState(false)
+  const [mapsLoaded, setMapsLoaded] = useState(false)
+
   const { isOnline } = usePWA()
 
   // Austin, Texas coordinates
@@ -131,10 +146,18 @@ export default function PulseChainEducationTracker() {
           setOnboardedCustomers(cachedCustomers)
         }
 
+        // Load cached territories
+        const cachedTerritories = await territoryStorage.getTerritories()
+        if (cachedTerritories.length > 0) {
+          setTerritories(cachedTerritories)
+          setVisibleTerritories(new Set(cachedTerritories.map((t) => t.id)))
+        }
+
         console.log("Loaded cached data:", {
           pins: cachedPins.length,
           followUps: cachedFollowUps.length,
           customers: cachedCustomers.length,
+          territories: cachedTerritories.length,
         })
       } catch (error) {
         console.error("Error initializing offline storage:", error)
@@ -159,6 +182,14 @@ export default function PulseChainEducationTracker() {
           return
         }
 
+        // Check if Google Maps is already loaded
+        if (window.google && window.google.maps) {
+          console.log("Google Maps already loaded")
+          setMapsLoaded(true)
+          initializeMap()
+          return
+        }
+
         // Load Google Maps script with error handling
         const script = document.createElement("script")
         script.src = config.scriptUrl
@@ -166,12 +197,19 @@ export default function PulseChainEducationTracker() {
         script.defer = true
 
         // Handle script loading errors
-        script.onerror = () => {
-          setMapError("Failed to load Google Maps. Please check your internet connection.")
+        script.onerror = (error) => {
+          console.error("Google Maps script loading error:", error)
+          setMapError("Failed to load Google Maps. Please check your internet connection and API key.")
+        }
+
+        script.onload = () => {
+          console.log("Google Maps script loaded successfully")
+          setMapsLoaded(true)
         }
 
         window.initMap = () => {
           try {
+            console.log("Initializing Google Maps...")
             initializeMap()
           } catch (error) {
             console.error("Map initialization error:", error)
@@ -271,6 +309,12 @@ export default function PulseChainEducationTracker() {
       return
     }
 
+    if (!window.google || !window.google.maps) {
+      console.error("Google Maps not loaded")
+      setMapError("Google Maps failed to load. Please refresh the page.")
+      return
+    }
+
     try {
       const mapInstance = new window.google.maps.Map(mapRef.current, {
         center: austinCenter,
@@ -303,9 +347,85 @@ export default function PulseChainEducationTracker() {
 
       setMap(mapInstance)
 
+      // Initialize Drawing Manager only if drawing library is available
+      if (window.google.maps.drawing) {
+        try {
+          const drawingManagerInstance = new window.google.maps.drawing.DrawingManager({
+            drawingMode: null,
+            drawingControl: true,
+            drawingControlOptions: {
+              position: window.google.maps.ControlPosition.TOP_CENTER,
+              drawingModes: [window.google.maps.drawing.OverlayType.POLYGON],
+            },
+            polygonOptions: {
+              editable: true,
+              fillColor: "#3b82f6",
+              fillOpacity: 0.3,
+              strokeColor: "#3b82f6",
+              strokeWeight: 2,
+            },
+          })
+
+          drawingManagerInstance.setMap(mapInstance)
+          setDrawingManager(drawingManagerInstance)
+
+          // Handle polygon completion
+          drawingManagerInstance.addListener("polygoncomplete", (polygon: any) => {
+            try {
+              const coordinates = polygon
+                .getPath()
+                .getArray()
+                .map((coord: any) => ({
+                  lat: coord.lat(),
+                  lng: coord.lng(),
+                }))
+
+              setPendingTerritoryCoords(coordinates)
+              setShowTerritoryForm(true)
+              setIsDrawingMode(false)
+              drawingManagerInstance.setDrawingMode(null)
+
+              // Remove the temporary polygon
+              polygon.setMap(null)
+            } catch (error) {
+              console.error("Error handling polygon completion:", error)
+              toast({
+                title: "Error",
+                description: "Failed to create territory. Please try again.",
+                variant: "destructive",
+              })
+            }
+          })
+
+          // Handle drawing mode changes
+          drawingManagerInstance.addListener("drawingmode_changed", () => {
+            try {
+              const mode = drawingManagerInstance.getDrawingMode()
+              setIsDrawingMode(mode === window.google.maps.drawing.OverlayType.POLYGON)
+            } catch (error) {
+              console.error("Error handling drawing mode change:", error)
+            }
+          })
+
+          console.log("Drawing Manager initialized successfully")
+        } catch (error) {
+          console.error("Error initializing Drawing Manager:", error)
+          toast({
+            title: "Warning",
+            description: "Territory drawing tools are not available. Basic map functionality will work.",
+          })
+        }
+      } else {
+        console.warn("Google Maps Drawing library not available")
+        toast({
+          title: "Warning",
+          description: "Territory drawing tools are not available. Please check your API configuration.",
+        })
+      }
+
       // Add click listener to map with error handling
       mapInstance.addListener("click", (event: any) => {
-        if (event?.latLng) {
+        if (event?.latLng && !isDrawingMode) {
           handleMapClick(event.latLng, mapInstance).catch((error) => {
             console.error("Map click handler error:", error)
           })
@@ -335,6 +455,10 @@ export default function PulseChainEducationTracker() {
   }
 
   const createMarker = (pin: Pin, mapInstance: any) => {
+    if (!window.google || !window.google.maps) {
+      throw new Error("Google Maps not available")
+    }
+
     const marker = new window.google.maps.Marker({
       position: { lat: pin.lat, lng: pin.lng },
       map: mapInstance,
@@ -361,7 +485,7 @@ export default function PulseChainEducationTracker() {
 
   const updateMarkerColor = (pinId: string, status: Pin["status"]) => {
     const markerRef = markers.find((m) => m.id === pinId)
-    if (markerRef) {
+    if (markerRef && window.google && window.google.maps) {
       const pin = pins.find((p) => p.id === pinId)
       markerRef.marker.setIcon({
         path: window.google.maps.SymbolPath.CIRCLE,
@@ -388,7 +512,7 @@ export default function PulseChainEducationTracker() {
       let placeId = ""
       const propertyName = ""
 
-      if (isOnline) {
+      if (isOnline && window.google && window.google.maps) {
         setDebugInfo("Getting address...")
 
         // Use Google Geocoding API
@@ -419,7 +543,11 @@ export default function PulseChainEducationTracker() {
 
       // Check if address already has a pin
       if (usedAddresses.has(address)) {
-        alert("This address already has a pin!")
+        toast({
+          title: "Duplicate Location",
+          description: "This address already has a pin!",
+          variant: "destructive",
+        })
         return
       }
 
@@ -461,6 +589,19 @@ export default function PulseChainEducationTracker() {
       setPins((prev) => [...prev, newPin])
       setUsedAddresses((prev) => new Set([...prev, address]))
 
+      // Check if pin is in any territories
+      try {
+        const containingTerritories = checkPinTerritories(newPin)
+        if (containingTerritories.length > 0) {
+          toast({
+            title: "Pin in Territory",
+            description: `This location is in: ${containingTerritories.map((t) => t.name).join(", ")}`,
+          })
+        }
+      } catch (error) {
+        console.error("Error checking territories:", error)
+      }
+
       // Open modal immediately
       console.log("Opening modal for new pin")
       setSelectedPin(newPin)
@@ -482,10 +623,19 @@ export default function PulseChainEducationTracker() {
         offline: !isOnline,
       }
 
-      await offlineStorage.savePin(fallbackPin)
-      setPins((prev) => [...prev, fallbackPin])
-      setSelectedPin(fallbackPin)
-      loadStreetView(lat, lng)
+      try {
+        await offlineStorage.savePin(fallbackPin)
+        setPins((prev) => [...prev, fallbackPin])
+        setSelectedPin(fallbackPin)
+        loadStreetView(lat, lng)
+      } catch (storageError) {
+        console.error("Error saving fallback pin:", storageError)
+        toast({
+          title: "Error",
+          description: "Failed to save location. Please try again.",
+          variant: "destructive",
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -506,6 +656,8 @@ export default function PulseChainEducationTracker() {
           const streetViewService = new window.google.maps.StreetViewService()
 
           const streetViewData = await new Promise<any>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Street View timeout")), 5000)
+
             streetViewService.getPanorama(
               {
                 location: { lat, lng },
@@ -513,6 +665,7 @@ export default function PulseChainEducationTracker() {
                 source: window.google.maps.StreetViewSource.OUTDOOR,
               },
               (data: any, status: any) => {
+                clearTimeout(timeout)
                 if (status === "OK" && data) {
                   resolve(data)
                 } else {
@@ -523,7 +676,7 @@ export default function PulseChainEducationTracker() {
           })
 
           // Calculate heading to face the clicked location from the street view position
-          if (streetViewData && streetViewData.location) {
+          if (streetViewData && streetViewData.location && window.google.maps.geometry) {
             const streetViewPos = streetViewData.location.latLng
             heading = window.google.maps.geometry.spherical.computeHeading(streetViewPos, { lat, lng })
           }
@@ -634,7 +787,11 @@ export default function PulseChainEducationTracker() {
 
   const handleGpsClick = () => {
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by this browser.")
+      toast({
+        title: "Geolocation Not Supported",
+        description: "Your browser doesn't support geolocation.",
+        variant: "destructive",
+      })
       return
     }
 
@@ -647,7 +804,7 @@ export default function PulseChainEducationTracker() {
 
         setUserLocation(newLocation)
 
-        if (map) {
+        if (map && window.google && window.google.maps) {
           // Center map on user location
           map.setCenter(newLocation)
           map.setZoom(16)
@@ -691,7 +848,11 @@ export default function PulseChainEducationTracker() {
             break
         }
 
-        alert(errorMessage)
+        toast({
+          title: "Location Error",
+          description: errorMessage,
+          variant: "destructive",
+        })
         setIsGpsLoading(false)
       },
       {
@@ -732,6 +893,156 @@ export default function PulseChainEducationTracker() {
     }
   }
 
+  const loadTerritoryPolygons = () => {
+    if (!map || !window.google || !window.google.maps) return
+
+    // Clear existing territory polygons
+    territoryPolygons.forEach((polygon) => {
+      try {
+        polygon.setMap(null)
+      } catch (error) {
+        console.error("Error clearing polygon:", error)
+      }
+    })
+
+    // Create new polygons for visible territories
+    const newPolygons = territories
+      .filter((territory) => visibleTerritories.has(territory.id))
+      .map((territory) => {
+        try {
+          const polygon = new window.google.maps.Polygon({
+            paths: territory.coordinates,
+            fillColor: territory.color,
+            fillOpacity: 0.2,
+            strokeColor: territory.color,
+            strokeWeight: 2,
+            map: map,
+          })
+
+          // Add territory info window
+          const infoWindow = new window.google.maps.InfoWindow({
+            content: `<div class="p-2"><strong>${territory.name}</strong><br/><small>${territory.coordinates.length} points</small></div>`,
+          })
+
+          polygon.addListener("click", (event: any) => {
+            try {
+              infoWindow.setPosition(event.latLng)
+              infoWindow.open(map)
+            } catch (error) {
+              console.error("Error opening info window:", error)
+            }
+          })
+
+          return polygon
+        } catch (error) {
+          console.error("Error creating territory polygon:", error)
+          return null
+        }
+      })
+      .filter(Boolean) // Remove null values
+
+    setTerritoryPolygons(newPolygons)
+  }
+
+  const handleCreateTerritory = async (name: string, color: string) => {
+    try {
+      const newTerritory: Territory = {
+        id: Date.now().toString(),
+        name,
+        color,
+        coordinates: pendingTerritoryCoords,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+
+      await territoryStorage.saveTerritory(newTerritory)
+      setTerritories((prev) => [...prev, newTerritory])
+      setVisibleTerritories((prev) => new Set([...prev, newTerritory.id]))
+      setShowTerritoryForm(false)
+      setPendingTerritoryCoords([])
+
+      toast({
+        title: "Territory Created!",
+        description: `"${name}" has been created successfully.`,
+      })
+    } catch (error) {
+      console.error("Error creating territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create territory. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateTerritory = async (territory: Territory) => {
+    try {
+      await territoryStorage.updateTerritory(territory)
+      setTerritories((prev) => prev.map((t) => (t.id === territory.id ? territory : t)))
+    } catch (error) {
+      console.error("Error updating territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update territory. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteTerritory = async (id: string) => {
+    try {
+      await territoryStorage.deleteTerritory(id)
+      setTerritories((prev) => prev.filter((t) => t.id !== id))
+      setVisibleTerritories((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(id)
+        return newSet
+      })
+    } catch (error) {
+      console.error("Error deleting territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete territory. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleToggleTerritoryVisibility = (id: string) => {
+    setVisibleTerritories((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(id)) {
+        newSet.delete(id)
+      } else {
+        newSet.add(id)
+      }
+      return newSet
+    })
+  }
+
+  const checkPinTerritories = (pin: any) => {
+    try {
+      const containingTerritories = getTerritoriesContainingPoint({ lat: pin.lat, lng: pin.lng }, territories)
+      if (containingTerritories.length > 0) {
+        console.log(
+          `Pin at ${pin.address} is in territories:`,
+          containingTerritories.map((t) => t.name),
+        )
+      }
+      return containingTerritories
+    } catch (error) {
+      console.error("Error checking pin territories:", error)
+      return []
+    }
+  }
+
+  // Load territory polygons when territories or visibility changes
+  useEffect(() => {
+    if (map && territories.length > 0 && mapsLoaded) {
+      loadTerritoryPolygons()
+    }
+  }, [map, territories, visibleTerritories, mapsLoaded])
+
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50 overflow-hidden touch-pan-y">
       {/* Header */}
@@ -759,6 +1070,16 @@ export default function PulseChainEducationTracker() {
               <Calendar className="h-4 w-4 mr-2" />
               View Calendar
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowTerritoryManager(true)}
+              className="border-purple-200 text-purple-700 hover:bg-purple-50"
+              disabled={!mapsLoaded}
+            >
+              <Square className="h-4 w-4 mr-2" />
+              Territories
+            </Button>
             <Badge variant="outline" className="flex items-center gap-1 border-purple-200 text-purple-700">
               <MapPin className="h-3 w-3" />
               {pins.length} Doors Knocked
@@ -766,6 +1087,11 @@ export default function PulseChainEducationTracker() {
             {debugInfo && (
               <Badge variant="outline" className="text-xs border-blue-200 text-blue-700 max-w-32 truncate">
                 {debugInfo}
+              </Badge>
+            )}
+            {isDrawingMode && (
+              <Badge variant="outline" className="text-xs border-green-200 text-green-700">
+                Drawing Mode Active
               </Badge>
             )}
           </div>
@@ -802,6 +1128,19 @@ export default function PulseChainEducationTracker() {
               >
                 <Calendar className="h-4 w-4 mr-2" />
                 View Calendar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowTerritoryManager(true)
+                  setShowMobileMenu(false)
+                }}
+                className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
+                disabled={!mapsLoaded}
+              >
+                <Square className="h-4 w-4 mr-2" />
+                Manage Territories
               </Button>
               {debugInfo && (
                 <Badge
@@ -862,6 +1201,7 @@ export default function PulseChainEducationTracker() {
                           <li>Maps JavaScript API</li>
                           <li>Geocoding API</li>
                           <li>Street View Static API</li>
+                          <li>Maps Drawing API</li>
                         </ul>
                       </li>
                       <li>Create an API key in "Credentials"</li>
@@ -1107,6 +1447,30 @@ export default function PulseChainEducationTracker() {
           </div>
         )}
       </div>
+
+      {/* Territory Manager */}
+      {showTerritoryManager && (
+        <TerritoryManager
+          territories={territories}
+          onClose={() => setShowTerritoryManager(false)}
+          onUpdateTerritory={handleUpdateTerritory}
+          onDeleteTerritory={handleDeleteTerritory}
+          onToggleTerritoryVisibility={handleToggleTerritoryVisibility}
+          visibleTerritories={visibleTerritories}
+        />
+      )}
+
+      {/* Territory Form */}
+      {showTerritoryForm && (
+        <TerritoryForm
+          coordinates={pendingTerritoryCoords}
+          onSave={handleCreateTerritory}
+          onCancel={() => {
+            setShowTerritoryForm(false)
+            setPendingTerritoryCoords([])
+          }}
+        />
+      )}
 
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />

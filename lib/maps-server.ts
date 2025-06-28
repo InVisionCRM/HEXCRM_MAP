@@ -12,7 +12,7 @@ export async function getGoogleMapsConfig() {
 
   return {
     hasValidKey: true,
-    scriptUrl: `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry,places&callback=initMap`,
+    scriptUrl: `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry,places,drawing&callback=initMap&loading=async`,
   }
 }
 
