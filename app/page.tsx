@@ -22,7 +22,7 @@ import {
   AlertCircle,
   Building,
 } from "lucide-react"
-import { google } from "google-maps"
+import type { google } from "googlemaps"
 
 // Components
 import { PropertyDetails } from "@/components/property-details"
@@ -460,12 +460,15 @@ export default function Home() {
                           <Marker
                             position={currentLocation}
                             icon={{
-                              path: google.maps.SymbolPath.CIRCLE,
-                              scale: 8,
-                              fillColor: "#4285f4",
-                              fillOpacity: 1,
-                              strokeColor: "#ffffff",
-                              strokeWeight: 2,
+                              url:
+                                "data:image/svg+xml;charset=UTF-8," +
+                                encodeURIComponent(`
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="8" cy="8" r="6" fill="#4285f4" stroke="#ffffff" strokeWidth="2"/>
+        </svg>
+      `),
+                              scaledSize: { width: 16, height: 16 },
+                              anchor: { x: 8, y: 8 },
                             }}
                           />
                         )}
@@ -477,12 +480,15 @@ export default function Home() {
                             position={{ lat: pin.lat, lng: pin.lng }}
                             onClick={() => setSelectedPin(pin)}
                             icon={{
-                              path: google.maps.SymbolPath.CIRCLE,
-                              scale: 10,
-                              fillColor: getStatusColor(pin.status),
-                              fillOpacity: 1,
-                              strokeColor: "#ffffff",
-                              strokeWeight: 2,
+                              url:
+                                "data:image/svg+xml;charset=UTF-8," +
+                                encodeURIComponent(`
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="10" cy="10" r="8" fill="${getStatusColor(pin.status)}" stroke="#ffffff" strokeWidth="2"/>
+        </svg>
+      `),
+                              scaledSize: { width: 20, height: 20 },
+                              anchor: { x: 10, y: 10 },
                             }}
                           />
                         ))}
