@@ -1,42 +1,36 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
-import { GoogleMap, LoadScript, Marker, Polygon } from "@react-google-maps/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { useToast } from "@/hooks/use-toast"
 import {
   MapPin,
-  Search,
-  Navigation,
-  Calendar,
-  Settings,
-  Target,
+  Home,
+  UserX,
   Clock,
   CheckCircle,
-  XCircle,
-  AlertCircle,
-  Building,
+  Plus,
+  Navigation,
+  Loader2,
+  Calendar,
+  Menu,
+  Wifi,
+  WifiOff,
+  Square,
 } from "lucide-react"
-import type { google } from "googlemaps"
-
-// Components
-import { PropertyDetails } from "@/components/property-details"
-import { FollowUpModal, type FollowUpData } from "@/components/follow-up-modal"
-import { CalendarView } from "@/components/calendar-view"
-import { TerritoryManager } from "@/components/territory-manager"
 import { OnboardingForm } from "@/components/onboarding-form"
-import { SetupGuide } from "@/components/setup-guide"
-
-// Utils and storage
+import { FollowUpModal } from "@/components/follow-up-modal"
+import { CalendarView } from "@/components/calendar-view"
+import { PWAInstallPrompt } from "@/components/pwa-install-prompt"
+import { getGoogleMapsConfig, generateStreetViewUrl } from "@/lib/maps-server"
 import { offlineStorage } from "@/lib/offline-storage"
-import type { Territory } from "@/lib/territory-storage"
-import { pointInPolygon } from "@/lib/turf-utils"
-import { geocodeAddress, reverseGeocode, getStreetViewImage } from "@/lib/maps-server"
+import { usePWA } from "@/hooks/use-pwa"
+import { toast } from "@/hooks/use-toast"
+import { TerritoryManager } from "@/components/territory-manager"
+import { TerritoryForm } from "@/components/territory-form"
+import { territoryStorage, type Territory } from "@/lib/territory-storage"
+import { getTerritoriesContainingPoint } from "@/lib/turf-utils"
 
 interface Pin {
   id: string
@@ -45,278 +39,840 @@ interface Pin {
   address: string
   placeId?: string
   propertyName?: string
-  status: "visited" | "not-interested" | "follow-up" | "interested"
+  status: "not-home" | "not-interested" | "follow-up" | "onboarded" | "new"
   timestamp: Date
+  offline?: boolean
+}
+
+interface MarkerRef {
+  id: string
+  marker: any
+}
+
+interface OnboardData {
+  firstName: string
+  phone?: string
+  email?: string
+  ownsCrypto?: boolean
+  socials: {
+    twitter?: string
+    telegram?: string
+    reddit?: string
+  }
   notes?: string
-  customerInfo?: {
-    name?: string
-    phone?: string
-    email?: string
+  pinId: string
+  address: string
+  timestamp: Date
+  offline?: boolean
+}
+
+interface FollowUpData {
+  id: string
+  pinId: string
+  address: string
+  propertyName?: string
+  date: string
+  time: string
+  notes?: string
+  timestamp: Date
+  offline?: boolean
+}
+
+declare global {
+  interface Window {
+    google: any
+    initMap: () => void
   }
 }
 
-const mapContainerStyle = {
-  width: "100%",
-  height: "500px",
-}
-
-const defaultCenter = {
-  lat: 40.7128,
-  lng: -74.006,
-}
-
-const libraries: ("places" | "geometry" | "drawing")[] = ["places", "geometry"]
-
-export default function Home() {
-  // State management
+export default function PulseChainEducationTracker() {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const [map, setMap] = useState<any>(null)
   const [pins, setPins] = useState<Pin[]>([])
-  const [followUps, setFollowUps] = useState<FollowUpData[]>([])
-  const [territories, setTerritories] = useState<Territory[]>([])
+  const [markers, setMarkers] = useState<MarkerRef[]>([])
   const [selectedPin, setSelectedPin] = useState<Pin | null>(null)
-  const [selectedTerritory, setSelectedTerritory] = useState<Territory | null>(null)
+  const [streetViewUrl, setStreetViewUrl] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [isGpsLoading, setIsGpsLoading] = useState(false)
+  const [usedAddresses, setUsedAddresses] = useState<Set<string>>(new Set())
+  const [mapError, setMapError] = useState<string>("")
+  const [debugInfo, setDebugInfo] = useState<string>("")
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [showOnboardForm, setShowOnboardForm] = useState(false)
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false)
+  const [showCalendarView, setShowCalendarView] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [currentOnboardData, setCurrentOnboardData] = useState<OnboardData | null>(null)
+  const [onboardedCustomers, setOnboardedCustomers] = useState<OnboardData[]>([])
+  const [followUps, setFollowUps] = useState<FollowUpData[]>([])
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
+
+  const [territories, setTerritories] = useState<Territory[]>([])
+  const [territoryPolygons, setTerritoryPolygons] = useState<any[]>([])
   const [visibleTerritories, setVisibleTerritories] = useState<Set<string>>(new Set())
-  const [searchAddress, setSearchAddress] = useState("")
-  const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null)
-  const [mapCenter, setMapCenter] = useState(defaultCenter)
-  const [isFollowUpModalOpen, setIsFollowUpModalOpen] = useState(false)
-  const [streetViewUrl, setStreetViewUrl] = useState("")
-  const [isOnboardingComplete, setIsOnboardingComplete] = useState(false)
-  const [showSetupGuide, setShowSetupGuide] = useState(false)
-  const [isApiKeyValid, setIsApiKeyValid] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState("map")
+  const [showTerritoryManager, setShowTerritoryManager] = useState(false)
+  const [showTerritoryForm, setShowTerritoryForm] = useState(false)
+  const [pendingTerritoryCoords, setPendingTerritoryCoords] = useState<Array<{ lat: number; lng: number }>>([])
+  const [drawingManager, setDrawingManager] = useState<any>(null)
+  const [isDrawingMode, setIsDrawingMode] = useState(false)
+  const [mapsLoaded, setMapsLoaded] = useState(false)
 
-  const { toast } = useToast()
-  const mapRef = useRef<google.maps.Map | null>(null)
+  const { isOnline } = usePWA()
 
-  // Load data on component mount
+  // Austin, Texas coordinates
+  const austinCenter = { lat: 30.2672, lng: -97.7431 }
+
   useEffect(() => {
-    loadInitialData()
+    // Initialize offline storage and load cached data
+    const initializeApp = async () => {
+      try {
+        await offlineStorage.init()
+
+        // Load cached data
+        const cachedPins = await offlineStorage.getPins()
+        const cachedFollowUps = await offlineStorage.getFollowUps()
+        const cachedCustomers = await offlineStorage.getCustomers()
+
+        if (cachedPins.length > 0) {
+          setPins(cachedPins)
+          setUsedAddresses(new Set(cachedPins.map((p) => p.address)))
+        }
+
+        if (cachedFollowUps.length > 0) {
+          setFollowUps(cachedFollowUps)
+        }
+
+        if (cachedCustomers.length > 0) {
+          setOnboardedCustomers(cachedCustomers)
+        }
+
+        // Load cached territories
+        const cachedTerritories = await territoryStorage.getTerritories()
+        if (cachedTerritories.length > 0) {
+          setTerritories(cachedTerritories)
+          setVisibleTerritories(new Set(cachedTerritories.map((t) => t.id)))
+        }
+
+        console.log("Loaded cached data:", {
+          pins: cachedPins.length,
+          followUps: cachedFollowUps.length,
+          customers: cachedCustomers.length,
+          territories: cachedTerritories.length,
+        })
+      } catch (error) {
+        console.error("Error initializing offline storage:", error)
+      }
+    }
+
+    initializeApp()
   }, [])
 
-  // Get current location
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const location = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
+    const initializeGoogleMaps = async () => {
+      if (!isOnline) {
+        setMapError("You're offline. Maps functionality is limited.")
+        return
+      }
+
+      try {
+        const config = await getGoogleMapsConfig()
+
+        if (!config.hasValidKey) {
+          setMapError(config.error || "Failed to load Google Maps configuration")
+          return
+        }
+
+        // Check if Google Maps is already loaded
+        if (window.google && window.google.maps) {
+          console.log("Google Maps already loaded")
+          setMapsLoaded(true)
+          initializeMap()
+          return
+        }
+
+        // Load Google Maps script with error handling
+        const script = document.createElement("script")
+        script.src = config.scriptUrl
+        script.async = true
+        script.defer = true
+
+        // Handle script loading errors
+        script.onerror = (error) => {
+          console.error("Google Maps script loading error:", error)
+          setMapError("Failed to load Google Maps. Please check your internet connection and API key.")
+        }
+
+        script.onload = () => {
+          console.log("Google Maps script loaded successfully")
+          setMapsLoaded(true)
+        }
+
+        window.initMap = () => {
+          try {
+            console.log("Initializing Google Maps...")
+            initializeMap()
+          } catch (error) {
+            console.error("Map initialization error:", error)
+            setMapError("Failed to initialize Google Maps. Please check your API key permissions.")
           }
-          setCurrentLocation(location)
-          setMapCenter(location)
-        },
-        (error) => {
-          console.warn("Geolocation error:", error)
-          toast({
-            title: "Location Access",
-            description: "Unable to get your current location. Using default location.",
-            variant: "destructive",
-          })
-        },
-      )
+        }
+
+        document.head.appendChild(script)
+
+        return () => {
+          if (document.head.contains(script)) {
+            document.head.removeChild(script)
+          }
+        }
+      } catch (error) {
+        console.error("Error initializing Google Maps:", error)
+        setMapError("Failed to initialize Google Maps configuration.")
+      }
     }
-  }, [toast])
 
-  const loadInitialData = async () => {
-    try {
-      setIsLoading(true)
+    initializeGoogleMaps()
+  }, [isOnline])
 
-      // Check if onboarding is complete
-      const onboardingStatus = await offlineStorage.getSetting("onboarding-complete")
-      setIsOnboardingComplete(!!onboardingStatus)
-
-      // Check API key validity
-      const apiKeyStatus = await offlineStorage.getSetting("api-key-valid")
-      setIsApiKeyValid(!!apiKeyStatus)
-
-      // Load pins and follow-ups
-      const [loadedPins, loadedFollowUps] = await Promise.all([offlineStorage.getPins(), offlineStorage.getFollowUps()])
-
-      setPins(
-        loadedPins.map((pin) => ({
-          ...pin,
-          timestamp: new Date(pin.timestamp),
-        })),
-      )
-
-      setFollowUps(
-        loadedFollowUps.map((followUp) => ({
-          ...followUp,
-          date: new Date(followUp.date),
-          createdAt: new Date(followUp.createdAt),
-        })),
-      )
-    } catch (error) {
-      console.error("Error loading initial data:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load saved data",
-        variant: "destructive",
+  // Add cached pins to map when both map and pins are available
+  useEffect(() => {
+    if (map && pins.length > 0) {
+      // Clear existing markers first
+      markers.forEach((markerRef) => {
+        if (markerRef.marker) {
+          markerRef.marker.setMap(null)
+        }
       })
+      setMarkers([])
+
+      // Add all pins to map
+      const newMarkers: MarkerRef[] = []
+      pins.forEach((pin) => {
+        try {
+          const marker = createMarker(pin, map)
+          newMarkers.push({ id: pin.id, marker })
+        } catch (error) {
+          console.error("Error creating marker for pin:", pin.id, error)
+        }
+      })
+      setMarkers(newMarkers)
+      console.log(`Added ${newMarkers.length} markers to map`)
+    }
+  }, [map, pins.length]) // Depend on map and pins.length to trigger when either changes
+
+  // Sync offline data when coming back online
+  useEffect(() => {
+    if (isOnline) {
+      syncOfflineData()
+    }
+  }, [isOnline])
+
+  const syncOfflineData = async () => {
+    try {
+      const offlineData = await offlineStorage.getOfflineData()
+
+      if (offlineData.pins.length > 0 || offlineData.followUps.length > 0 || offlineData.customers.length > 0) {
+        toast({
+          title: "Syncing offline data...",
+          description: `Syncing ${offlineData.pins.length} pins, ${offlineData.followUps.length} follow-ups, and ${offlineData.customers.length} customers`,
+        })
+
+        // Here you would sync with your backend API
+        // For now, we'll just mark them as synced
+        setTimeout(async () => {
+          await offlineStorage.markAsSynced(
+            "pins",
+            offlineData.pins.map((p) => p.id),
+          )
+          await offlineStorage.markAsSynced(
+            "followUps",
+            offlineData.followUps.map((f) => f.id),
+          )
+          await offlineStorage.markAsSynced(
+            "customers",
+            offlineData.customers.map((c) => c.pinId),
+          )
+
+          toast({
+            title: "Sync complete!",
+            description: "All offline data has been synchronized",
+          })
+        }, 2000)
+      }
+    } catch (error) {
+      console.error("Error syncing offline data:", error)
+    }
+  }
+
+  const initializeMap = () => {
+    if (!mapRef.current) {
+      console.error("Map container not found")
+      return
+    }
+
+    if (!window.google || !window.google.maps) {
+      console.error("Google Maps not loaded")
+      setMapError("Google Maps failed to load. Please refresh the page.")
+      return
+    }
+
+    try {
+      const mapInstance = new window.google.maps.Map(mapRef.current, {
+        center: austinCenter,
+        zoom: 12,
+        mapTypeId: "roadmap",
+        gestureHandling: "greedy", // Prevents page zoom on mobile
+        styles: [
+          {
+            featureType: "water",
+            elementType: "geometry",
+            stylers: [{ color: "#e3f2fd" }],
+          },
+          {
+            featureType: "landscape",
+            elementType: "geometry",
+            stylers: [{ color: "#f8f9ff" }],
+          },
+          {
+            featureType: "road",
+            elementType: "geometry",
+            stylers: [{ color: "#ffffff" }],
+          },
+          {
+            featureType: "poi",
+            elementType: "geometry",
+            stylers: [{ color: "#f3e5f5" }],
+          },
+        ],
+      })
+
+      setMap(mapInstance)
+
+      // Initialize Drawing Manager only if drawing library is available
+      if (window.google.maps.drawing) {
+        try {
+          const drawingManagerInstance = new window.google.maps.drawing.DrawingManager({
+            drawingMode: null,
+            drawingControl: true,
+            drawingControlOptions: {
+              position: window.google.maps.ControlPosition.TOP_CENTER,
+              drawingModes: [window.google.maps.drawing.OverlayType.POLYGON],
+            },
+            polygonOptions: {
+              editable: true,
+              fillColor: "#3b82f6",
+              fillOpacity: 0.3,
+              strokeColor: "#3b82f6",
+              strokeWeight: 2,
+            },
+          })
+
+          drawingManagerInstance.setMap(mapInstance)
+          setDrawingManager(drawingManagerInstance)
+
+          // Handle polygon completion
+          drawingManagerInstance.addListener("polygoncomplete", (polygon: any) => {
+            try {
+              const coordinates = polygon
+                .getPath()
+                .getArray()
+                .map((coord: any) => ({
+                  lat: coord.lat(),
+                  lng: coord.lng(),
+                }))
+
+              setPendingTerritoryCoords(coordinates)
+              setShowTerritoryForm(true)
+              setIsDrawingMode(false)
+              drawingManagerInstance.setDrawingMode(null)
+
+              // Remove the temporary polygon
+              polygon.setMap(null)
+            } catch (error) {
+              console.error("Error handling polygon completion:", error)
+              toast({
+                title: "Error",
+                description: "Failed to create territory. Please try again.",
+                variant: "destructive",
+              })
+            }
+          })
+
+          // Handle drawing mode changes
+          drawingManagerInstance.addListener("drawingmode_changed", () => {
+            try {
+              const mode = drawingManagerInstance.getDrawingMode()
+              setIsDrawingMode(mode === window.google.maps.drawing.OverlayType.POLYGON)
+            } catch (error) {
+              console.error("Error handling drawing mode change:", error)
+            }
+          })
+
+          console.log("Drawing Manager initialized successfully")
+        } catch (error) {
+          console.error("Error initializing Drawing Manager:", error)
+          toast({
+            title: "Warning",
+            description: "Territory drawing tools are not available. Basic map functionality will work.",
+          })
+        }
+      } else {
+        console.warn("Google Maps Drawing library not available")
+        toast({
+          title: "Warning",
+          description: "Territory drawing tools are not available. Please check your API configuration.",
+        })
+      }
+
+      // Add click listener to map with error handling
+      mapInstance.addListener("click", (event: any) => {
+        if (event?.latLng && !isDrawingMode) {
+          handleMapClick(event.latLng, mapInstance).catch((error) => {
+            console.error("Map click handler error:", error)
+          })
+        }
+      })
+
+      console.log("Map initialized successfully")
+    } catch (error) {
+      console.error("Failed to initialize map:", error)
+      setMapError("Failed to initialize Google Maps. Please refresh the page and try again.")
+    }
+  }
+
+  const getMarkerColor = (status: Pin["status"]) => {
+    switch (status) {
+      case "not-interested":
+        return "#ef4444" // Red
+      case "not-home":
+        return "#eab308" // Yellow
+      case "follow-up":
+        return "#3b82f6" // Blue
+      case "onboarded":
+        return "#22c55e" // Green
+      default:
+        return "#6b7280" // Gray for new pins
+    }
+  }
+
+  const createMarker = (pin: Pin, mapInstance: any) => {
+    if (!window.google || !window.google.maps) {
+      throw new Error("Google Maps not available")
+    }
+
+    const marker = new window.google.maps.Marker({
+      position: { lat: pin.lat, lng: pin.lng },
+      map: mapInstance,
+      title: pin.address,
+      icon: {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: getMarkerColor(pin.status),
+        fillOpacity: 1,
+        strokeColor: pin.offline ? "#ff6b6b" : "#ffffff",
+        strokeWeight: pin.offline ? 3 : 2,
+      },
+    })
+
+    // Add click listener to marker
+    marker.addListener("click", () => {
+      console.log("Marker clicked, opening modal")
+      setSelectedPin(pin)
+      loadStreetView(pin.lat, pin.lng)
+    })
+
+    return marker
+  }
+
+  const updateMarkerColor = (pinId: string, status: Pin["status"]) => {
+    const markerRef = markers.find((m) => m.id === pinId)
+    if (markerRef && window.google && window.google.maps) {
+      const pin = pins.find((p) => p.id === pinId)
+      markerRef.marker.setIcon({
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: getMarkerColor(status),
+        fillOpacity: 1,
+        strokeColor: pin?.offline ? "#ff6b6b" : "#ffffff",
+        strokeWeight: pin?.offline ? 3 : 2,
+      })
+    }
+  }
+
+  const handleMapClick = async (latLng: any, mapInstance: any) => {
+    console.log("Map clicked at:", latLng.lat(), latLng.lng())
+    setDebugInfo("Processing click...")
+
+    const lat = latLng.lat()
+    const lng = latLng.lng()
+
+    setIsLoading(true)
+
+    try {
+      let address = `${lat.toFixed(6)}, ${lng.toFixed(6)}` // Default fallback
+      let placeId = ""
+      const propertyName = ""
+
+      if (isOnline && window.google && window.google.maps) {
+        setDebugInfo("Getting address...")
+
+        // Use Google Geocoding API
+        try {
+          const geocoder = new window.google.maps.Geocoder()
+          const response = await new Promise<any>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Geocoding timeout")), 5000)
+
+            geocoder.geocode({ location: { lat, lng } }, (results: any, status: any) => {
+              clearTimeout(timeout)
+              if (status === "OK" && results && results[0]) {
+                resolve(results[0])
+              } else {
+                reject(new Error(`Geocoding failed: ${status}`))
+              }
+            })
+          })
+
+          address = response.formatted_address || address
+          placeId = response.place_id || ""
+          console.log("Geocoding successful:", address)
+        } catch (geocodingError) {
+          console.warn("Geocoding failed, using coordinates:", geocodingError)
+        }
+      } else {
+        setDebugInfo("Offline - using coordinates...")
+      }
+
+      // Check if address already has a pin
+      if (usedAddresses.has(address)) {
+        toast({
+          title: "Duplicate Location",
+          description: "This address already has a pin!",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setDebugInfo("Creating pin...")
+
+      // Create new pin
+      const newPin: Pin = {
+        id: Date.now().toString(),
+        lat,
+        lng,
+        address,
+        placeId,
+        propertyName,
+        status: "new",
+        timestamp: new Date(),
+        offline: !isOnline,
+      }
+
+      console.log("Created pin:", newPin)
+
+      // Save to offline storage
+      await offlineStorage.savePin(newPin)
+
+      // Add marker to map
+      if (map) {
+        try {
+          const marker = createMarker(newPin, map)
+
+          // Store marker reference
+          setMarkers((prev) => [...prev, { id: newPin.id, marker }])
+
+          console.log("Marker added successfully")
+        } catch (markerError) {
+          console.error("Failed to create marker:", markerError)
+        }
+      }
+
+      // Update state
+      setPins((prev) => [...prev, newPin])
+      setUsedAddresses((prev) => new Set([...prev, address]))
+
+      // Check if pin is in any territories
+      try {
+        const containingTerritories = checkPinTerritories(newPin)
+        if (containingTerritories.length > 0) {
+          toast({
+            title: "Pin in Territory",
+            description: `This location is in: ${containingTerritories.map((t) => t.name).join(", ")}`,
+          })
+        }
+      } catch (error) {
+        console.error("Error checking territories:", error)
+      }
+
+      // Open modal immediately
+      console.log("Opening modal for new pin")
+      setSelectedPin(newPin)
+      loadStreetView(lat, lng)
+
+      setDebugInfo(isOnline ? "Pin created successfully!" : "Pin saved offline!")
+    } catch (error) {
+      console.error("Error in handleMapClick:", error)
+      setDebugInfo(`Error: ${error.message}`)
+
+      // Create a basic pin even if APIs fail
+      const fallbackPin: Pin = {
+        id: Date.now().toString(),
+        lat,
+        lng,
+        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        status: "new",
+        timestamp: new Date(),
+        offline: !isOnline,
+      }
+
+      try {
+        await offlineStorage.savePin(fallbackPin)
+        setPins((prev) => [...prev, fallbackPin])
+        setSelectedPin(fallbackPin)
+        loadStreetView(lat, lng)
+      } catch (storageError) {
+        console.error("Error saving fallback pin:", storageError)
+        toast({
+          title: "Error",
+          description: "Failed to save location. Please try again.",
+          variant: "destructive",
+        })
+      }
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleMapClick = useCallback(
-    async (event: google.maps.MapMouseEvent) => {
-      if (!event.latLng) return
-
-      const lat = event.latLng.lat()
-      const lng = event.latLng.lng()
-
-      try {
-        // Reverse geocode to get address
-        const geocodeResult = await reverseGeocode(lat, lng)
-
-        const newPin: Pin = {
-          id: crypto.randomUUID(),
-          lat,
-          lng,
-          address: geocodeResult?.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-          placeId: geocodeResult?.placeId,
-          propertyName: geocodeResult?.propertyName,
-          status: "visited",
-          timestamp: new Date(),
-        }
-
-        // Save pin
-        await offlineStorage.savePin(newPin)
-        setPins((prev) => [...prev, newPin])
-
-        // Check if pin is in any territory
-        const containingTerritories = territories.filter((territory) =>
-          pointInPolygon({ lat, lng }, territory.coordinates),
-        )
-
-        if (containingTerritories.length > 0) {
-          toast({
-            title: "Territory Match",
-            description: `This location is in: ${containingTerritories.map((t) => t.name).join(", ")}`,
-          })
-        }
-
-        // Load street view
-        const streetView = await getStreetViewImage(lat, lng)
-        setStreetViewUrl(streetView.url)
-        setSelectedPin(newPin)
-      } catch (error) {
-        console.error("Error adding pin:", error)
-        toast({
-          title: "Error",
-          description: "Failed to add location",
-          variant: "destructive",
-        })
-      }
-    },
-    [territories, toast],
-  )
-
-  const handleSearch = async () => {
-    if (!searchAddress.trim()) return
+  const loadStreetView = async (lat: number, lng: number) => {
+    if (!isOnline) {
+      setStreetViewUrl("/placeholder.svg?height=300&width=600")
+      return
+    }
 
     try {
-      const result = await geocodeAddress(searchAddress)
-      if (result) {
-        setMapCenter({ lat: result.lat, lng: result.lng })
-        setSearchAddress("")
-        toast({
-          title: "Location Found",
-          description: result.address,
-        })
-      } else {
-        toast({
-          title: "Not Found",
-          description: "Could not find the specified address",
-          variant: "destructive",
-        })
+      let heading = 0
+
+      // Try to get optimal heading using Street View Service
+      if (window.google && window.google.maps) {
+        try {
+          const streetViewService = new window.google.maps.StreetViewService()
+
+          const streetViewData = await new Promise<any>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Street View timeout")), 5000)
+
+            streetViewService.getPanorama(
+              {
+                location: { lat, lng },
+                radius: 50,
+                source: window.google.maps.StreetViewSource.OUTDOOR,
+              },
+              (data: any, status: any) => {
+                clearTimeout(timeout)
+                if (status === "OK" && data) {
+                  resolve(data)
+                } else {
+                  reject(new Error(`Street View not available: ${status}`))
+                }
+              },
+            )
+          })
+
+          // Calculate heading to face the clicked location from the street view position
+          if (streetViewData && streetViewData.location && window.google.maps.geometry) {
+            const streetViewPos = streetViewData.location.latLng
+            heading = window.google.maps.geometry.spherical.computeHeading(streetViewPos, { lat, lng })
+          }
+        } catch (error) {
+          console.warn("Street View Service failed, using default heading:", error)
+        }
       }
+
+      // Generate Street View URL using server action
+      const url = await generateStreetViewUrl(lat, lng, heading)
+      setStreetViewUrl(url)
+      console.log("Street View URL generated")
     } catch (error) {
-      console.error("Search error:", error)
-      toast({
-        title: "Search Error",
-        description: "Failed to search for address",
-        variant: "destructive",
-      })
+      console.error("Failed to load street view:", error)
+      setStreetViewUrl("/placeholder.svg?height=300&width=600")
     }
   }
 
-  const handlePinStatusUpdate = async (pinId: string, status: Pin["status"], notes?: string) => {
-    const updatedPins = pins.map((pin) => (pin.id === pinId ? { ...pin, status, notes, timestamp: new Date() } : pin))
-
+  const updatePinStatus = async (pinId: string, status: Pin["status"]) => {
+    const updatedPins = pins.map((pin) => (pin.id === pinId ? { ...pin, status, offline: !isOnline } : pin))
     setPins(updatedPins)
 
-    // Save to storage
+    // Save to offline storage
     const updatedPin = updatedPins.find((p) => p.id === pinId)
     if (updatedPin) {
       await offlineStorage.savePin(updatedPin)
     }
 
+    // Update marker color
+    updateMarkerColor(pinId, status)
+
     setSelectedPin(null)
-
-    toast({
-      title: "Status Updated",
-      description: `Location marked as ${status.replace("-", " ")}`,
-    })
   }
 
-  const handleFollowUpSave = async (followUp: FollowUpData) => {
-    await offlineStorage.saveFollowUp(followUp)
-    setFollowUps((prev) => [...prev, followUp])
-    setIsFollowUpModalOpen(false)
-
-    toast({
-      title: "Follow-up Scheduled",
-      description: `Follow-up scheduled for ${followUp.date.toLocaleDateString()}`,
-    })
+  const handleFollowUpClick = () => {
+    setShowFollowUpModal(true)
   }
 
-  const handleFollowUpUpdate = async (id: string, updates: Partial<FollowUpData>) => {
-    const updatedFollowUps = followUps.map((f) => (f.id === id ? { ...f, ...updates } : f))
-    setFollowUps(updatedFollowUps)
+  const handleFollowUpSave = async (data: FollowUpData) => {
+    const followUpData = { ...data, offline: !isOnline }
 
-    // Save to storage
-    const updatedFollowUp = updatedFollowUps.find((f) => f.id === id)
-    if (updatedFollowUp) {
-      await offlineStorage.saveFollowUp(updatedFollowUp)
+    // Add follow-up to the list
+    setFollowUps((prev) => [...prev, followUpData])
+
+    // Save to offline storage
+    await offlineStorage.saveFollowUp(followUpData)
+
+    // Update pin status to follow-up
+    if (selectedPin) {
+      updatePinStatus(selectedPin.id, "follow-up")
     }
+
+    // Close modal
+    setShowFollowUpModal(false)
   }
 
-  const handleOnboardingComplete = async (data: any) => {
-    await offlineStorage.saveSetting("onboarding-complete", true)
-    await offlineStorage.saveSetting("user-profile", data)
-    setIsOnboardingComplete(true)
+  const handleFollowUpCancel = () => {
+    setShowFollowUpModal(false)
+  }
 
+  const handleOnboardClick = () => {
+    setShowOnboardForm(true)
+  }
+
+  const handleOnboardSubmit = async (data: OnboardData) => {
+    const customerData = { ...data, offline: !isOnline }
+
+    // Update pin status to onboarded
+    if (selectedPin) {
+      updatePinStatus(selectedPin.id, "onboarded")
+    }
+
+    // Store onboard data
+    setOnboardedCustomers((prev) => [...prev, customerData])
+    setCurrentOnboardData(customerData)
+
+    // Save to offline storage
+    await offlineStorage.saveCustomer(customerData)
+
+    // Close onboard form and show success modal
+    setShowOnboardForm(false)
+    setShowSuccessModal(true)
+
+    // Show success toast
     toast({
-      title: "Welcome!",
-      description: "Your account has been set up successfully",
+      title: "Success!",
+      description: `${data.firstName} has been successfully onboarded${!isOnline ? " (saved offline)" : ""}!`,
     })
   }
 
-  const handleApiKeyValidated = async (isValid: boolean) => {
-    setIsApiKeyValid(isValid)
-    await offlineStorage.saveSetting("api-key-valid", isValid)
+  const handleOnboardCancel = () => {
+    setShowOnboardForm(false)
+  }
 
-    if (isValid) {
-      setShowSetupGuide(false)
+  const handleSuccessBackToMap = () => {
+    setShowSuccessModal(false)
+    setSelectedPin(null)
+    setCurrentOnboardData(null)
+  }
+
+  const handleSuccessViewProfile = () => {
+    setShowSuccessModal(false)
+    setSelectedPin(null)
+    // Here you would navigate to profile view
+    alert(`Viewing profile for ${currentOnboardData?.firstName}`)
+    setCurrentOnboardData(null)
+  }
+
+  const handleGpsClick = () => {
+    if (!navigator.geolocation) {
       toast({
-        title: "Setup Complete",
-        description: "Google Maps API key validated successfully",
+        title: "Geolocation Not Supported",
+        description: "Your browser doesn't support geolocation.",
+        variant: "destructive",
       })
+      return
     }
+
+    setIsGpsLoading(true)
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+        const newLocation = { lat: latitude, lng: longitude }
+
+        setUserLocation(newLocation)
+
+        if (map && window.google && window.google.maps) {
+          // Center map on user location
+          map.setCenter(newLocation)
+          map.setZoom(16)
+
+          // Add or update user location marker
+          const userMarker = new window.google.maps.Marker({
+            position: newLocation,
+            map: map,
+            title: "Your Location",
+            icon: {
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: "#8b5cf6",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 3,
+            },
+          })
+
+          console.log("GPS location found:", newLocation)
+        }
+
+        setIsGpsLoading(false)
+      },
+      (error) => {
+        console.error("GPS error:", error)
+        let errorMessage = "Unable to get your location. "
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage += "Location access was denied. Please enable location permissions."
+            break
+          case error.POSITION_UNAVAILABLE:
+            errorMessage += "Location information is unavailable."
+            break
+          case error.TIMEOUT:
+            errorMessage += "Location request timed out."
+            break
+          default:
+            errorMessage += "An unknown error occurred."
+            break
+        }
+
+        toast({
+          title: "Location Error",
+          description: errorMessage,
+          variant: "destructive",
+        })
+        setIsGpsLoading(false)
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      },
+    )
   }
 
   const getStatusIcon = (status: Pin["status"]) => {
     switch (status) {
-      case "visited":
-        return <CheckCircle className="h-4 w-4 text-green-600" />
+      case "not-home":
+        return <Home className="h-4 w-4" />
       case "not-interested":
-        return <XCircle className="h-4 w-4 text-red-600" />
+        return <UserX className="h-4 w-4" />
       case "follow-up":
-        return <Clock className="h-4 w-4 text-yellow-600" />
-      case "interested":
-        return <AlertCircle className="h-4 w-4 text-blue-600" />
+        return <Clock className="h-4 w-4" />
+      case "onboarded":
+        return <CheckCircle className="h-4 w-4" />
       default:
         return <MapPin className="h-4 w-4" />
     }
@@ -324,440 +880,600 @@ export default function Home() {
 
   const getStatusColor = (status: Pin["status"]) => {
     switch (status) {
-      case "visited":
-        return "#10b981"
+      case "not-home":
+        return "bg-yellow-500"
       case "not-interested":
-        return "#ef4444"
+        return "bg-red-500"
       case "follow-up":
-        return "#f59e0b"
-      case "interested":
-        return "#3b82f6"
+        return "bg-blue-500"
+      case "onboarded":
+        return "bg-green-500"
       default:
-        return "#6b7280"
+        return "bg-gray-500"
     }
   }
 
-  // Show onboarding if not complete
-  if (!isOnboardingComplete) {
-    return <OnboardingForm onComplete={handleOnboardingComplete} />
+  const loadTerritoryPolygons = () => {
+    if (!map || !window.google || !window.google.maps) return
+
+    // Clear existing territory polygons
+    territoryPolygons.forEach((polygon) => {
+      try {
+        polygon.setMap(null)
+      } catch (error) {
+        console.error("Error clearing polygon:", error)
+      }
+    })
+
+    // Create new polygons for visible territories
+    const newPolygons = territories
+      .filter((territory) => visibleTerritories.has(territory.id))
+      .map((territory) => {
+        try {
+          const polygon = new window.google.maps.Polygon({
+            paths: territory.coordinates,
+            fillColor: territory.color,
+            fillOpacity: 0.2,
+            strokeColor: territory.color,
+            strokeWeight: 2,
+            map: map,
+          })
+
+          // Add territory info window
+          const infoWindow = new window.google.maps.InfoWindow({
+            content: `<div class="p-2"><strong>${territory.name}</strong><br/><small>${territory.coordinates.length} points</small></div>`,
+          })
+
+          polygon.addListener("click", (event: any) => {
+            try {
+              infoWindow.setPosition(event.latLng)
+              infoWindow.open(map)
+            } catch (error) {
+              console.error("Error opening info window:", error)
+            }
+          })
+
+          return polygon
+        } catch (error) {
+          console.error("Error creating territory polygon:", error)
+          return null
+        }
+      })
+      .filter(Boolean) // Remove null values
+
+    setTerritoryPolygons(newPolygons)
   }
 
-  // Show setup guide if API key is not valid
-  if (!isApiKeyValid || showSetupGuide) {
-    return (
-      <SetupGuide
-        onApiKeyValidated={handleApiKeyValidated}
-        currentApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}
-      />
-    )
+  const handleCreateTerritory = async (name: string, color: string) => {
+    try {
+      const newTerritory: Territory = {
+        id: Date.now().toString(),
+        name,
+        color,
+        coordinates: pendingTerritoryCoords,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+
+      await territoryStorage.saveTerritory(newTerritory)
+      setTerritories((prev) => [...prev, newTerritory])
+      setVisibleTerritories((prev) => new Set([...prev, newTerritory.id]))
+      setShowTerritoryForm(false)
+      setPendingTerritoryCoords([])
+
+      toast({
+        title: "Territory Created!",
+        description: `"${name}" has been created successfully.`,
+      })
+    } catch (error) {
+      console.error("Error creating territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create territory. Please try again.",
+        variant: "destructive",
+      })
+    }
   }
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your sales tracker...</p>
-        </div>
-      </div>
-    )
+  const handleUpdateTerritory = async (territory: Territory) => {
+    try {
+      await territoryStorage.updateTerritory(territory)
+      setTerritories((prev) => prev.map((t) => (t.id === territory.id ? territory : t)))
+    } catch (error) {
+      console.error("Error updating territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update territory. Please try again.",
+        variant: "destructive",
+      })
+    }
   }
+
+  const handleDeleteTerritory = async (id: string) => {
+    try {
+      await territoryStorage.deleteTerritory(id)
+      setTerritories((prev) => prev.filter((t) => t.id !== id))
+      setVisibleTerritories((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(id)
+        return newSet
+      })
+    } catch (error) {
+      console.error("Error deleting territory:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete territory. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleToggleTerritoryVisibility = (id: string) => {
+    setVisibleTerritories((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(id)) {
+        newSet.delete(id)
+      } else {
+        newSet.add(id)
+      }
+      return newSet
+    })
+  }
+
+  const checkPinTerritories = (pin: any) => {
+    try {
+      const containingTerritories = getTerritoriesContainingPoint({ lat: pin.lat, lng: pin.lng }, territories)
+      if (containingTerritories.length > 0) {
+        console.log(
+          `Pin at ${pin.address} is in territories:`,
+          containingTerritories.map((t) => t.name),
+        )
+      }
+      return containingTerritories
+    } catch (error) {
+      console.error("Error checking pin territories:", error)
+      return []
+    }
+  }
+
+  // Load territory polygons when territories or visibility changes
+  useEffect(() => {
+    if (map && territories.length > 0 && mapsLoaded) {
+      loadTerritoryPolygons()
+    }
+  }, [map, territories, visibleTerritories, mapsLoaded])
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50 overflow-hidden touch-pan-y">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <Target className="h-8 w-8 text-blue-600" />
-              <h1 className="text-xl font-bold text-gray-900">PulseChain Education Tracker</h1>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <Badge variant="outline" className="hidden sm:flex">
-                {pins.length} Locations
-              </Badge>
-              <Button variant="outline" size="sm" onClick={() => setShowSetupGuide(true)}>
-                <Settings className="h-4 w-4 mr-2" />
-                Setup
-              </Button>
+      <div className="bg-white/80 backdrop-blur-sm shadow-sm border-b border-purple-100 p-3 sm:p-4 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg sm:text-2xl font-bold bg-gradient-to-r from-purple-600 via-blue-600 to-pink-600 bg-clip-text text-transparent truncate flex-1 min-w-0">
+              PulseChain Education Tracker
+            </h1>
+            {/* Online/Offline Indicator */}
+            <div className="flex items-center gap-1">
+              {isOnline ? <Wifi className="h-4 w-4 text-green-600" /> : <WifiOff className="h-4 w-4 text-red-600" />}
+              <span className="text-xs text-gray-600 hidden sm:inline">{isOnline ? "Online" : "Offline"}</span>
             </div>
           </div>
-        </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="map" className="flex items-center gap-2">
-              <MapPin className="h-4 w-4" />
-              Map
-            </TabsTrigger>
-            <TabsTrigger value="calendar" className="flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
-              Calendar
-            </TabsTrigger>
-            <TabsTrigger value="territories" className="flex items-center gap-2">
-              <Building className="h-4 w-4" />
+          {/* Desktop Header Controls */}
+          <div className="hidden md:flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCalendarView(true)}
+              className="border-purple-200 text-purple-700 hover:bg-purple-50"
+            >
+              <Calendar className="h-4 w-4 mr-2" />
+              View Calendar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowTerritoryManager(true)}
+              className="border-purple-200 text-purple-700 hover:bg-purple-50"
+              disabled={!mapsLoaded}
+            >
+              <Square className="h-4 w-4 mr-2" />
               Territories
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="flex items-center gap-2">
-              <Target className="h-4 w-4" />
-              Analytics
-            </TabsTrigger>
-          </TabsList>
+            </Button>
+            <Badge variant="outline" className="flex items-center gap-1 border-purple-200 text-purple-700">
+              <MapPin className="h-3 w-3" />
+              {pins.length} Doors Knocked
+            </Badge>
+            {debugInfo && (
+              <Badge variant="outline" className="text-xs border-blue-200 text-blue-700 max-w-32 truncate">
+                {debugInfo}
+              </Badge>
+            )}
+            {isDrawingMode && (
+              <Badge variant="outline" className="text-xs border-green-200 text-green-700">
+                Drawing Mode Active
+              </Badge>
+            )}
+          </div>
 
-          {/* Map Tab */}
-          <TabsContent value="map" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Map */}
-              <div className="lg:col-span-3">
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle>Sales Territory Map</CardTitle>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-2">
-                          <Input
-                            placeholder="Search address..."
-                            value={searchAddress}
-                            onChange={(e) => setSearchAddress(e.target.value)}
-                            onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-                            className="w-64"
-                          />
-                          <Button size="sm" onClick={handleSearch}>
-                            <Search className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => currentLocation && setMapCenter(currentLocation)}
-                        >
-                          <Navigation className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <LoadScript
-                      googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""}
-                      libraries={libraries}
-                    >
-                      <GoogleMap
-                        mapContainerStyle={mapContainerStyle}
-                        center={mapCenter}
-                        zoom={13}
-                        onClick={handleMapClick}
-                        onLoad={(map) => {
-                          mapRef.current = map
-                        }}
-                      >
-                        {/* Current Location Marker */}
-                        {currentLocation && (
-                          <Marker
-                            position={currentLocation}
-                            icon={{
-                              url:
-                                "data:image/svg+xml;charset=UTF-8," +
-                                encodeURIComponent(`
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="8" cy="8" r="6" fill="#4285f4" stroke="#ffffff" strokeWidth="2"/>
-        </svg>
-      `),
-                              scaledSize: { width: 16, height: 16 },
-                              anchor: { x: 8, y: 8 },
-                            }}
-                          />
-                        )}
+          {/* Mobile Header Controls */}
+          <div className="flex md:hidden items-center gap-2">
+            <Badge variant="outline" className="flex items-center gap-1 border-purple-200 text-purple-700 text-xs">
+              <MapPin className="h-3 w-3" />
+              {pins.length}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              className="border-purple-200 text-purple-700 hover:bg-purple-50"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
 
-                        {/* Pin Markers */}
-                        {pins.map((pin) => (
-                          <Marker
-                            key={pin.id}
-                            position={{ lat: pin.lat, lng: pin.lng }}
-                            onClick={() => setSelectedPin(pin)}
-                            icon={{
-                              url:
-                                "data:image/svg+xml;charset=UTF-8," +
-                                encodeURIComponent(`
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="10" cy="10" r="8" fill="${getStatusColor(pin.status)}" stroke="#ffffff" strokeWidth="2"/>
-        </svg>
-      `),
-                              scaledSize: { width: 20, height: 20 },
-                              anchor: { x: 10, y: 10 },
-                            }}
-                          />
-                        ))}
-
-                        {/* Territory Polygons */}
-                        {territories
-                          .filter((territory) => visibleTerritories.has(territory.id))
-                          .map((territory) => (
-                            <Polygon
-                              key={territory.id}
-                              paths={territory.coordinates}
-                              options={{
-                                fillColor: territory.color,
-                                fillOpacity: 0.2,
-                                strokeColor: territory.color,
-                                strokeOpacity: 0.8,
-                                strokeWeight: 2,
-                              }}
-                              onClick={() => setSelectedTerritory(territory)}
-                            />
-                          ))}
-                      </GoogleMap>
-                    </LoadScript>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Sidebar */}
-              <div className="space-y-6">
-                {/* Stats */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Today's Stats</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Visited</span>
-                      <Badge variant="outline" className="bg-green-50 text-green-700">
-                        {pins.filter((p) => p.status === "visited").length}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Follow-ups</span>
-                      <Badge variant="outline" className="bg-yellow-50 text-yellow-700">
-                        {pins.filter((p) => p.status === "follow-up").length}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Not Interested</span>
-                      <Badge variant="outline" className="bg-red-50 text-red-700">
-                        {pins.filter((p) => p.status === "not-interested").length}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Interested</span>
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                        {pins.filter((p) => p.status === "interested").length}
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Territory Manager */}
-                <TerritoryManager
-                  selectedTerritoryId={selectedTerritory?.id}
-                  onTerritorySelect={setSelectedTerritory}
-                  visibleTerritories={visibleTerritories}
-                  onToggleVisibility={(territoryId) => {
-                    setVisibleTerritories((prev) => {
-                      const newSet = new Set(prev)
-                      if (newSet.has(territoryId)) {
-                        newSet.delete(territoryId)
-                      } else {
-                        newSet.add(territoryId)
-                      }
-                      return newSet
-                    })
-                  }}
-                />
-
-                {/* Recent Activity */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Recent Activity</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      {pins
-                        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-                        .slice(0, 5)
-                        .map((pin) => (
-                          <div key={pin.id} className="flex items-center gap-3 text-sm">
-                            {getStatusIcon(pin.status)}
-                            <div className="flex-1 min-w-0">
-                              <p className="truncate">{pin.propertyName || pin.address}</p>
-                              <p className="text-xs text-gray-500">{pin.timestamp.toLocaleTimeString()}</p>
-                            </div>
-                          </div>
-                        ))}
-                      {pins.length === 0 && (
-                        <p className="text-sm text-gray-500 text-center py-4">
-                          No activity yet. Click on the map to add locations.
-                        </p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Calendar Tab */}
-          <TabsContent value="calendar">
-            <CalendarView followUps={followUps} onUpdateFollowUp={handleFollowUpUpdate} />
-          </TabsContent>
-
-          {/* Territories Tab */}
-          <TabsContent value="territories">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <TerritoryManager
-                selectedTerritoryId={selectedTerritory?.id}
-                onTerritorySelect={setSelectedTerritory}
-                visibleTerritories={visibleTerritories}
-                onToggleVisibility={(territoryId) => {
-                  setVisibleTerritories((prev) => {
-                    const newSet = new Set(prev)
-                    if (newSet.has(territoryId)) {
-                      newSet.delete(territoryId)
-                    } else {
-                      newSet.add(territoryId)
-                    }
-                    return newSet
-                  })
+        {/* Mobile Menu Dropdown */}
+        {showMobileMenu && (
+          <div className="md:hidden mt-3 p-3 bg-white/90 backdrop-blur-sm rounded-lg border border-purple-200 shadow-lg">
+            <div className="space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowCalendarView(true)
+                  setShowMobileMenu(false)
                 }}
-              />
-
-              {selectedTerritory && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Territory Details</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div>
-                        <h3 className="font-medium">{selectedTerritory.name}</h3>
-                        <p className="text-sm text-gray-600">{selectedTerritory.coordinates.length} boundary points</p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-600">Created:</span>
-                          <p>{selectedTerritory.createdAt.toLocaleDateString()}</p>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">Updated:</span>
-                          <p>{selectedTerritory.updatedAt.toLocaleDateString()}</p>
-                        </div>
-                      </div>
-
-                      <div>
-                        <span className="text-gray-600">Locations in territory:</span>
-                        <p className="font-medium">
-                          {
-                            pins.filter((pin) =>
-                              pointInPolygon({ lat: pin.lat, lng: pin.lng }, selectedTerritory.coordinates),
-                            ).length
-                          }
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
+              >
+                <Calendar className="h-4 w-4 mr-2" />
+                View Calendar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowTerritoryManager(true)
+                  setShowMobileMenu(false)
+                }}
+                className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
+                disabled={!mapsLoaded}
+              >
+                <Square className="h-4 w-4 mr-2" />
+                Manage Territories
+              </Button>
+              {debugInfo && (
+                <Badge
+                  variant="outline"
+                  className="w-full text-xs border-blue-200 text-blue-700 justify-center truncate"
+                >
+                  {debugInfo}
+                </Badge>
               )}
             </div>
-          </TabsContent>
+          </div>
+        )}
+      </div>
 
-          {/* Analytics Tab */}
-          <TabsContent value="analytics">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Total Locations</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{pins.length}</div>
-                  <p className="text-xs text-gray-600">All time</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Success Rate</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {pins.length > 0
-                      ? Math.round((pins.filter((p) => p.status === "interested").length / pins.length) * 100)
-                      : 0}
-                    %
-                  </div>
-                  <p className="text-xs text-gray-600">Interested prospects</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Follow-ups</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{followUps.length}</div>
-                  <p className="text-xs text-gray-600">Scheduled</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Territories</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{territories.length}</div>
-                  <p className="text-xs text-gray-600">Defined areas</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Charts would go here */}
-            <Card className="mt-6">
+      {/* Map Container */}
+      <div className="flex-1 relative min-h-0 touch-none">
+        {mapError ? (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-100 via-blue-100 to-pink-100 p-4">
+            <Card className="max-w-md w-full border-purple-200 shadow-lg">
               <CardHeader>
-                <CardTitle>Activity Overview</CardTitle>
+                <CardTitle className="text-red-600 text-lg flex items-center gap-2">
+                  {!isOnline && <WifiOff className="h-5 w-5" />}
+                  {isOnline ? "Google Maps Error" : "Offline Mode"}
+                </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-center py-12 text-gray-500">
-                  <Target className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p>Analytics charts coming soon...</p>
+              <CardContent className="space-y-4">
+                <p className="text-gray-700 text-sm">{mapError}</p>
+                {!isOnline ? (
+                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                    <h4 className="font-semibold mb-2 text-sm">Available offline features:</h4>
+                    <ul className="list-disc list-inside space-y-1 text-xs">
+                      <li>View cached locations and data</li>
+                      <li>Add new pins (will sync when online)</li>
+                      <li>Schedule follow-ups</li>
+                      <li>Onboard customers</li>
+                      <li>View calendar</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
+                    <h4 className="font-semibold mb-2 text-sm">To fix this issue:</h4>
+                    <ol className="list-decimal list-inside space-y-1 text-xs">
+                      <li>
+                        Go to{" "}
+                        <a
+                          href="https://console.cloud.google.com/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-600 hover:underline"
+                        >
+                          Google Cloud Console
+                        </a>
+                      </li>
+                      <li>Create a new project or select an existing one</li>
+                      <li>
+                        Enable the following APIs:
+                        <ul className="list-disc list-inside ml-4 mt-1">
+                          <li>Maps JavaScript API</li>
+                          <li>Geocoding API</li>
+                          <li>Street View Static API</li>
+                          <li>Maps Drawing API</li>
+                        </ul>
+                      </li>
+                      <li>Create an API key in "Credentials"</li>
+                      <li>Add the API key to your environment variables</li>
+                      <li>Restart your development server</li>
+                    </ol>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <div ref={mapRef} className="w-full h-full touch-none" />
+        )}
+
+        {/* GPS Button */}
+        {!mapError && (
+          <Button
+            onClick={handleGpsClick}
+            disabled={isGpsLoading}
+            className="absolute top-3 right-3 z-10 bg-white/90 backdrop-blur-sm text-purple-700 border border-purple-200 hover:bg-purple-50 shadow-lg"
+            size="sm"
+          >
+            {isGpsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
+            <span className="hidden sm:inline ml-2">{isGpsLoading ? "Getting Location..." : "My Location"}</span>
+          </Button>
+        )}
+
+        {isLoading && (
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-lg border border-purple-200 shadow-lg max-w-xs w-full text-center">
+              <p className="text-purple-700 text-sm">
+                {isOnline ? "Loading address information..." : "Saving location offline..."}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Pin Details Modal */}
+        {selectedPin && !showOnboardForm && !showFollowUpModal && !showSuccessModal && (
+          <div
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setSelectedPin(null)
+              }
+            }}
+          >
+            <Card className="w-full max-w-md bg-white/95 backdrop-blur-sm border-purple-200 shadow-xl max-h-[90vh] overflow-y-auto">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-purple-700 text-lg">
+                  {getStatusIcon(selectedPin.status)}
+                  Location Details
+                  {selectedPin.offline && (
+                    <Badge variant="outline" className="text-xs border-orange-200 text-orange-700">
+                      Offline
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Address and Property Info */}
+                <div>
+                  {selectedPin.propertyName && (
+                    <>
+                      <p className="text-sm text-gray-600">Property:</p>
+                      <p className="font-semibold text-base break-words">{selectedPin.propertyName}</p>
+                    </>
+                  )}
+                  <p className="text-sm text-gray-600 mt-2">Address:</p>
+                  <p className="font-medium text-sm break-words">{selectedPin.address}</p>
+                  <p className="text-xs text-gray-500 mt-1 break-all">
+                    {selectedPin.lat.toFixed(6)}, {selectedPin.lng.toFixed(6)}
+                  </p>
+                </div>
+
+                {/* Street View Image */}
+                <div>
+                  <p className="text-sm text-gray-600 mb-2">Street View:</p>
+                  <img
+                    src={streetViewUrl || "/placeholder.svg?height=300&width=600"}
+                    alt="Street view"
+                    className="w-full h-40 sm:h-48 object-cover rounded-lg border border-purple-200 shadow-sm"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement
+                      target.src = "/placeholder.svg?height=300&width=600"
+                    }}
+                  />
+                  {!isOnline && <p className="text-xs text-orange-600 mt-1">Street View unavailable offline</p>}
+                </div>
+
+                {/* Status Buttons */}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => updatePinStatus(selectedPin.id, "not-home")}
+                    className="flex items-center gap-1 border-yellow-300 text-yellow-700 hover:bg-yellow-50 text-xs"
+                  >
+                    <Home className="h-3 w-3" />
+                    Not Home
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => updatePinStatus(selectedPin.id, "not-interested")}
+                    className="flex items-center gap-1 border-red-300 text-red-700 hover:bg-red-50 text-xs"
+                  >
+                    <UserX className="h-3 w-3" />
+                    Not Interested
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFollowUpClick}
+                    className="flex items-center gap-1 border-blue-300 text-blue-700 hover:bg-blue-50 bg-transparent text-xs"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Follow-up
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleOnboardClick}
+                    className="flex items-center gap-1 border-green-300 text-green-700 hover:bg-green-50 bg-transparent text-xs"
+                  >
+                    <CheckCircle className="h-3 w-3" />
+                    Onboarded
+                  </Button>
+                </div>
+
+                {/* Create New Onboard Button */}
+                <Button
+                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-sm"
+                  onClick={handleOnboardClick}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create New Onboard
+                </Button>
+
+                {/* Close Button */}
+                <Button
+                  variant="outline"
+                  className="w-full bg-transparent border-purple-200 text-purple-700 hover:bg-purple-50 text-sm"
+                  onClick={() => {
+                    console.log("Closing modal")
+                    setSelectedPin(null)
+                  }}
+                >
+                  Close
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Follow-up Modal */}
+        {showFollowUpModal && selectedPin && (
+          <FollowUpModal pin={selectedPin} onSave={handleFollowUpSave} onCancel={handleFollowUpCancel} />
+        )}
+
+        {/* Calendar View */}
+        {showCalendarView && <CalendarView followUps={followUps} onClose={() => setShowCalendarView(false)} />}
+
+        {/* Onboarding Form */}
+        {showOnboardForm && selectedPin && (
+          <OnboardingForm pin={selectedPin} onSubmit={handleOnboardSubmit} onCancel={handleOnboardCancel} />
+        )}
+
+        {/* Success Modal */}
+        {showSuccessModal && currentOnboardData && (
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <Card className="w-full max-w-md bg-white/95 backdrop-blur-sm border-purple-200 shadow-xl">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-green-600 text-lg">
+                  <CheckCircle className="h-6 w-6" />
+                  Onboarding Complete!
+                  {currentOnboardData.offline && (
+                    <Badge variant="outline" className="text-xs border-orange-200 text-orange-700">
+                      Saved Offline
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-center">
+                  <p className="text-lg font-semibold break-words">{currentOnboardData.firstName}</p>
+                  <p className="text-sm text-gray-600">has been successfully onboarded</p>
+                  <p className="text-xs text-gray-500 mt-1 break-words">{currentOnboardData.address}</p>
+                  {currentOnboardData.offline && (
+                    <p className="text-xs text-orange-600 mt-1">Data will sync when online</p>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 bg-transparent border-purple-200 text-purple-700 hover:bg-purple-50 text-sm"
+                    onClick={handleSuccessBackToMap}
+                  >
+                    Back To Map
+                  </Button>
+                  <Button
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-sm"
+                    onClick={handleSuccessViewProfile}
+                  >
+                    View Profile
+                  </Button>
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
-      </main>
+          </div>
+        )}
+      </div>
 
-      {/* Modals */}
-      {selectedPin && (
-        <Dialog open={!!selectedPin} onOpenChange={() => setSelectedPin(null)}>
-          <DialogContent className="sm:max-w-[600px]">
-            <DialogHeader>
-              <DialogTitle>Location Details</DialogTitle>
-            </DialogHeader>
-            <PropertyDetails pin={selectedPin} streetViewUrl={streetViewUrl} />
-            <div className="flex gap-2 pt-4">
-              <Button onClick={() => handlePinStatusUpdate(selectedPin.id, "visited")} className="flex-1">
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Mark Visited
-              </Button>
-              <Button variant="outline" onClick={() => setIsFollowUpModalOpen(true)} className="flex-1">
-                <Clock className="h-4 w-4 mr-2" />
-                Schedule Follow-up
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+      {/* Stats Bar - Fixed height and proper mobile spacing */}
+      <div className="bg-white/80 backdrop-blur-sm border-t border-purple-100 p-3 sm:p-4 flex-shrink-0 min-h-[80px] sm:min-h-[60px]">
+        <div className="grid grid-cols-2 sm:flex sm:items-center sm:justify-around gap-2 sm:gap-4 text-xs sm:text-sm">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <div className="w-2 h-2 sm:w-3 sm:h-3 bg-yellow-500 rounded-full flex-shrink-0"></div>
+            <span className="truncate">Not Home: {pins.filter((p) => p.status === "not-home").length}</span>
+          </div>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <div className="w-2 h-2 sm:w-3 sm:h-3 bg-red-500 rounded-full flex-shrink-0"></div>
+            <span className="truncate">Not Interested: {pins.filter((p) => p.status === "not-interested").length}</span>
+          </div>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <div className="w-2 h-2 sm:w-3 sm:h-3 bg-blue-500 rounded-full flex-shrink-0"></div>
+            <span className="truncate">Follow-up: {pins.filter((p) => p.status === "follow-up").length}</span>
+          </div>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <div className="w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full flex-shrink-0"></div>
+            <span className="truncate">Onboarded: {pins.filter((p) => p.status === "onboarded").length}</span>
+          </div>
+        </div>
+
+        {/* Offline indicator in stats */}
+        {!isOnline && (
+          <div className="mt-2 text-center">
+            <Badge variant="outline" className="text-xs border-orange-200 text-orange-700">
+              <WifiOff className="h-3 w-3 mr-1" />
+              Working Offline - Data will sync when connected
+            </Badge>
+          </div>
+        )}
+      </div>
+
+      {/* Territory Manager */}
+      {showTerritoryManager && (
+        <TerritoryManager
+          territories={territories}
+          onClose={() => setShowTerritoryManager(false)}
+          onUpdateTerritory={handleUpdateTerritory}
+          onDeleteTerritory={handleDeleteTerritory}
+          onToggleTerritoryVisibility={handleToggleTerritoryVisibility}
+          visibleTerritories={visibleTerritories}
+        />
       )}
 
-      <FollowUpModal
-        isOpen={isFollowUpModalOpen}
-        onClose={() => setIsFollowUpModalOpen(false)}
-        onSave={handleFollowUpSave}
-        pin={selectedPin || { id: "", address: "", propertyName: "" }}
-      />
+      {/* Territory Form */}
+      {showTerritoryForm && (
+        <TerritoryForm
+          coordinates={pendingTerritoryCoords}
+          onSave={handleCreateTerritory}
+          onCancel={() => {
+            setShowTerritoryForm(false)
+            setPendingTerritoryCoords([])
+          }}
+        />
+      )}
+
+      {/* PWA Install Prompt */}
+      <PWAInstallPrompt />
     </div>
   )
 }

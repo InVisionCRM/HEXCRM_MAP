@@ -3,7 +3,7 @@ const STATIC_CACHE = "pulsechain-static-v1"
 const DYNAMIC_CACHE = "pulsechain-dynamic-v1"
 
 // Assets to cache immediately
-const urlsToCache = ["/", "/offline.html", "/icons/icon-192x192.png", "/icons/icon-512x512.png", "/pulsechain-logo.png"]
+const STATIC_ASSETS = ["/", "/manifest.json", "/pulsechain-logo.png", "/offline.html"]
 
 // Google Maps and external resources
 const EXTERNAL_RESOURCES = ["https://maps.googleapis.com", "https://fonts.googleapis.com", "https://fonts.gstatic.com"]
@@ -14,10 +14,10 @@ self.addEventListener("install", (event) => {
 
   event.waitUntil(
     caches
-      .open(CACHE_NAME)
+      .open(STATIC_CACHE)
       .then((cache) => {
         console.log("Service Worker: Caching static assets")
-        return cache.addAll(urlsToCache)
+        return cache.addAll(STATIC_ASSETS)
       })
       .then(() => {
         console.log("Service Worker: Static assets cached")
@@ -84,7 +84,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Handle static assets
-  if (urlsToCache.some((asset) => request.url.includes(asset))) {
+  if (STATIC_ASSETS.some((asset) => request.url.includes(asset))) {
     event.respondWith(
       caches.match(request).then((response) => {
         return response || fetch(request)
@@ -149,17 +149,18 @@ self.addEventListener("fetch", (event) => {
 
   // Default fetch strategy
   event.respondWith(
-    caches
-      .match(event.request)
+    fetch(request)
       .then((response) => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request)
+        // Cache successful responses
+        if (response.status === 200 && request.url.startsWith("http")) {
+          const responseClone = response.clone()
+          caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, responseClone))
+        }
+        return response
       })
       .catch(() => {
-        // If both cache and network fail, show offline page
-        if (event.request.destination === "document") {
-          return caches.match("/offline.html")
-        }
+        // Try to serve from cache
+        return caches.match(request)
       }),
   )
 })

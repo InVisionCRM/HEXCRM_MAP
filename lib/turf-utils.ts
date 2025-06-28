@@ -1,29 +1,85 @@
-// Utility functions for territory operations using basic geometry
-// This replaces the need for the full Turf.js library
+"use client"
 
-export interface Point {
+// Turf.js utility functions for territory management
+// Using individual imports to optimize bundle size
+
+interface Point {
   lat: number
   lng: number
 }
 
-export interface Polygon {
+interface Territory {
+  id: string
+  name: string
+  color: string
   coordinates: Point[]
+  createdAt: Date
+  updatedAt: Date
 }
 
-/**
- * Check if a point is inside a polygon using ray casting algorithm
- */
-export function pointInPolygon(point: Point, polygon: Point[]): boolean {
-  const { lat, lng } = point
+// Convert coordinates to Turf.js polygon format
+export function coordinatesToTurfPolygon(coordinates: Point[]) {
+  if (coordinates.length < 3) {
+    throw new Error("Polygon must have at least 3 coordinates")
+  }
+
+  // Turf.js expects [lng, lat] format and closed polygon (first point = last point)
+  const turfCoords = coordinates.map((coord) => [coord.lng, coord.lat])
+
+  // Ensure polygon is closed
+  if (
+    turfCoords[0][0] !== turfCoords[turfCoords.length - 1][0] ||
+    turfCoords[0][1] !== turfCoords[turfCoords.length - 1][1]
+  ) {
+    turfCoords.push(turfCoords[0])
+  }
+
+  return {
+    type: "Feature" as const,
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [turfCoords],
+    },
+    properties: {},
+  }
+}
+
+// Check if a point is inside a territory polygon
+export function isPointInTerritory(point: Point, territory: Territory): boolean {
+  try {
+    const polygon = coordinatesToTurfPolygon(territory.coordinates)
+    const turfPoint = {
+      type: "Feature" as const,
+      geometry: {
+        type: "Point" as const,
+        coordinates: [point.lng, point.lat],
+      },
+      properties: {},
+    }
+
+    // Simple point-in-polygon algorithm (ray casting)
+    return pointInPolygon(turfPoint.geometry.coordinates, polygon.geometry.coordinates[0])
+  } catch (error) {
+    console.error("Error checking point in territory:", error)
+    return false
+  }
+}
+
+// Find all territories that contain a given point
+export function getTerritoriesContainingPoint(point: Point, territories: Territory[]): Territory[] {
+  return territories.filter((territory) => isPointInTerritory(point, territory))
+}
+
+// Simple point-in-polygon algorithm (ray casting method)
+function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  const [x, y] = point
   let inside = false
 
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].lng
-    const yi = polygon[i].lat
-    const xj = polygon[j].lng
-    const yj = polygon[j].lat
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
 
-    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
       inside = !inside
     }
   }
@@ -31,117 +87,48 @@ export function pointInPolygon(point: Point, polygon: Point[]): boolean {
   return inside
 }
 
-/**
- * Calculate the area of a polygon in square meters (approximate)
- */
+// Calculate polygon area (approximate)
 export function calculatePolygonArea(coordinates: Point[]): number {
   if (coordinates.length < 3) return 0
 
   let area = 0
-  const earthRadius = 6371000 // Earth's radius in meters
+  const n = coordinates.length
 
-  for (let i = 0; i < coordinates.length; i++) {
-    const j = (i + 1) % coordinates.length
-    const lat1 = (coordinates[i].lat * Math.PI) / 180
-    const lat2 = (coordinates[j].lat * Math.PI) / 180
-    const deltaLng = ((coordinates[j].lng - coordinates[i].lng) * Math.PI) / 180
-
-    area += deltaLng * (2 + Math.sin(lat1) + Math.sin(lat2))
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    area += coordinates[i].lat * coordinates[j].lng
+    area -= coordinates[j].lat * coordinates[i].lng
   }
 
-  area = Math.abs((area * earthRadius * earthRadius) / 2)
-  return area
+  return Math.abs(area) / 2
 }
 
-/**
- * Calculate the center point of a polygon
- */
-export function getPolygonCenter(coordinates: Point[]): Point {
-  if (coordinates.length === 0) {
-    return { lat: 0, lng: 0 }
-  }
-
-  let totalLat = 0
-  let totalLng = 0
-
-  coordinates.forEach((coord) => {
-    totalLat += coord.lat
-    totalLng += coord.lng
-  })
-
+// Snap coordinates to a grid (optional feature for clean lines)
+export function snapToGrid(point: Point, gridSize = 0.0001): Point {
   return {
-    lat: totalLat / coordinates.length,
-    lng: totalLng / coordinates.length,
+    lat: Math.round(point.lat / gridSize) * gridSize,
+    lng: Math.round(point.lng / gridSize) * gridSize,
   }
 }
 
-/**
- * Calculate distance between two points in meters
- */
-export function calculateDistance(point1: Point, point2: Point): number {
-  const R = 6371000 // Earth's radius in meters
-  const lat1Rad = (point1.lat * Math.PI) / 180
-  const lat2Rad = (point2.lat * Math.PI) / 180
-  const deltaLatRad = ((point2.lat - point1.lat) * Math.PI) / 180
-  const deltaLngRad = ((point2.lng - point1.lng) * Math.PI) / 180
-
-  const a =
-    Math.sin(deltaLatRad / 2) * Math.sin(deltaLatRad / 2) +
-    Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(deltaLngRad / 2) * Math.sin(deltaLngRad / 2)
-
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-
-  return R * c
-}
-
-/**
- * Validate if a polygon is valid (at least 3 points, no self-intersections)
- */
-export function validatePolygon(coordinates: Point[]): { isValid: boolean; error?: string } {
-  if (coordinates.length < 3) {
-    return { isValid: false, error: "Polygon must have at least 3 points" }
-  }
-
-  // Check for duplicate consecutive points
-  for (let i = 0; i < coordinates.length; i++) {
-    const current = coordinates[i]
-    const next = coordinates[(i + 1) % coordinates.length]
-
-    if (current.lat === next.lat && current.lng === next.lng) {
-      return { isValid: false, error: "Polygon cannot have duplicate consecutive points" }
-    }
-  }
-
-  // Basic check for very small polygons
-  const area = calculatePolygonArea(coordinates)
-  if (area < 1) {
-    // Less than 1 square meter
-    return { isValid: false, error: "Polygon area is too small" }
-  }
-
-  return { isValid: true }
-}
-
-/**
- * Simplify polygon by removing points that are too close together
- */
+// Simplify polygon by removing points that are too close together
 export function simplifyPolygon(coordinates: Point[], tolerance = 0.0001): Point[] {
   if (coordinates.length <= 3) return coordinates
 
-  const simplified: Point[] = [coordinates[0]]
+  const simplified = [coordinates[0]]
 
   for (let i = 1; i < coordinates.length; i++) {
-    const current = coordinates[i]
-    const last = simplified[simplified.length - 1]
+    const prev = simplified[simplified.length - 1]
+    const curr = coordinates[i]
 
-    const distance = Math.sqrt(Math.pow(current.lat - last.lat, 2) + Math.pow(current.lng - last.lng, 2))
+    const distance = Math.sqrt(Math.pow(curr.lat - prev.lat, 2) + Math.pow(curr.lng - prev.lng, 2))
 
     if (distance > tolerance) {
-      simplified.push(current)
+      simplified.push(curr)
     }
   }
 
-  // Ensure we have at least 3 points
+  // Ensure we have at least 3 points for a valid polygon
   if (simplified.length < 3 && coordinates.length >= 3) {
     return coordinates.slice(0, 3)
   }
@@ -149,10 +136,8 @@ export function simplifyPolygon(coordinates: Point[], tolerance = 0.0001): Point
   return simplified
 }
 
-/**
- * Get bounding box of a polygon
- */
-export function getBoundingBox(coordinates: Point[]): {
+// Get polygon bounds
+export function getPolygonBounds(coordinates: Point[]): {
   north: number
   south: number
   east: number
