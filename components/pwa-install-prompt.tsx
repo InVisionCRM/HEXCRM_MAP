@@ -3,79 +3,66 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Download, X } from "lucide-react"
+import { X, Download, Smartphone } from "lucide-react"
 import { usePWA } from "@/hooks/use-pwa"
 
 export function PWAInstallPrompt() {
   const { isInstallable, isInstalled, installApp } = usePWA()
-  const [showPrompt, setShowPrompt] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
+  const [isDismissed, setIsDismissed] = useState(false)
 
   useEffect(() => {
-    // Show prompt after 30 seconds if installable and not dismissed
-    const timer = setTimeout(() => {
-      if (isInstallable && !isInstalled && !dismissed) {
-        setShowPrompt(true)
-      }
-    }, 30000)
-
-    return () => clearTimeout(timer)
-  }, [isInstallable, isInstalled, dismissed])
-
-  useEffect(() => {
-    // Check if user previously dismissed the prompt
-    const wasDismissed = localStorage.getItem("pwa-install-dismissed")
-    if (wasDismissed) {
-      setDismissed(true)
+    const dismissed = localStorage.getItem("pwa-install-dismissed")
+    if (dismissed) {
+      setIsDismissed(true)
     }
   }, [])
 
   const handleInstall = async () => {
     const success = await installApp()
     if (success) {
-      setShowPrompt(false)
+      setIsDismissed(true)
     }
   }
 
   const handleDismiss = () => {
-    setShowPrompt(false)
-    setDismissed(true)
+    setIsDismissed(true)
     localStorage.setItem("pwa-install-dismissed", "true")
   }
 
-  if (!showPrompt || !isInstallable || isInstalled) {
+  if (!isInstallable || isInstalled || isDismissed) {
     return null
   }
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 z-50 md:left-auto md:right-4 md:max-w-sm">
-      <Card className="bg-white/95 backdrop-blur-sm border-purple-200 shadow-xl">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-2 rounded-lg">
-              <img src="/pulsechain-logo.png" alt="PulseChain" className="h-5 w-5" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-gray-900 mb-1">Install PulseChain Tracker</h3>
-              <p className="text-sm text-gray-600 mb-3">Add to your home screen for quick access and offline use!</p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleInstall}
-                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-                >
-                  <Download className="h-4 w-4 mr-1" />
-                  Install
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleDismiss}>
-                  <X className="h-4 w-4 mr-1" />
-                  Not Now
-                </Button>
-              </div>
+    <Card className="fixed bottom-4 left-4 right-4 z-50 shadow-lg border-blue-200 bg-blue-50 md:left-auto md:right-4 md:w-80">
+      <CardContent className="p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0">
+            <Smartphone className="h-6 w-6 text-blue-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-medium text-blue-900 mb-1">Install App</h3>
+            <p className="text-xs text-blue-700 mb-3">Install this app for offline access and better performance</p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleInstall} className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Download className="h-3 w-3 mr-1" />
+                Install
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDismiss}
+                className="text-blue-600 border-blue-300 bg-transparent"
+              >
+                Later
+              </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+          <Button size="sm" variant="ghost" onClick={handleDismiss} className="flex-shrink-0 h-6 w-6 p-0 text-blue-600">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

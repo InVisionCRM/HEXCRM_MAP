@@ -12,50 +12,32 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export function usePWA() {
-  const [isOnline, setIsOnline] = useState(true)
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isInstallable, setIsInstallable] = useState(false)
   const [isInstalled, setIsInstalled] = useState(false)
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
 
   useEffect(() => {
-    // Check if app is installed
-    const checkInstalled = () => {
-      const isStandalone = window.matchMedia("(display-mode: standalone)").matches
-      const isIOSStandalone = (window.navigator as any).standalone === true
-      setIsInstalled(isStandalone || isIOSStandalone)
-    }
-
-    // Online/offline detection
-    const handleOnline = () => setIsOnline(true)
-    const handleOffline = () => setIsOnline(false)
-
-    // Install prompt handling
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault()
       setDeferredPrompt(e as BeforeInstallPromptEvent)
       setIsInstallable(true)
     }
 
-    // App installed handling
     const handleAppInstalled = () => {
       setIsInstalled(true)
       setIsInstallable(false)
       setDeferredPrompt(null)
     }
 
-    // Initial checks
-    setIsOnline(navigator.onLine)
-    checkInstalled()
+    // Check if app is already installed
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsInstalled(true)
+    }
 
-    // Event listeners
-    window.addEventListener("online", handleOnline)
-    window.addEventListener("offline", handleOffline)
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt)
     window.addEventListener("appinstalled", handleAppInstalled)
 
     return () => {
-      window.removeEventListener("online", handleOnline)
-      window.removeEventListener("offline", handleOffline)
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt)
       window.removeEventListener("appinstalled", handleAppInstalled)
     }
@@ -69,6 +51,7 @@ export function usePWA() {
       const { outcome } = await deferredPrompt.userChoice
 
       if (outcome === "accepted") {
+        setIsInstalled(true)
         setIsInstallable(false)
         setDeferredPrompt(null)
         return true
@@ -81,7 +64,6 @@ export function usePWA() {
   }
 
   return {
-    isOnline,
     isInstallable,
     isInstalled,
     installApp,

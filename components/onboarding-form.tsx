@@ -1,396 +1,413 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Badge } from "@/components/ui/badge"
-import { toast } from "@/hooks/use-toast"
-import {
-  CheckCircle,
-  X,
-  User,
-  Phone,
-  Mail,
-  MapPin,
-  Bitcoin,
-  Twitter,
-  MessageCircle,
-  Send,
-  StickyNote,
-} from "lucide-react"
+import { User, Building, MapPin, Target, CheckCircle } from "lucide-react"
 
-interface Pin {
-  id: string
-  lat: number
-  lng: number
-  address: string
-  placeId?: string
-  propertyName?: string
-  status: string
-  timestamp: Date
-}
+interface OnboardingData {
+  // Personal Information
+  fullName: string
+  email: string
+  phone: string
+  company: string
+  role: string
 
-interface OnboardData {
-  firstName: string
-  phone?: string
-  email?: string
-  ownsCrypto?: boolean
-  socials: {
-    twitter?: string
-    telegram?: string
-    reddit?: string
-  }
-  notes?: string
-  pinId: string
-  address: string
-  timestamp: Date
+  // Territory Information
+  primaryTerritory: string
+  territoryType: "residential" | "commercial" | "mixed"
+  coverageArea: string
+
+  // Sales Information
+  product: string
+  targetAudience: string
+  salesGoals: string
+  experience: "beginner" | "intermediate" | "advanced"
+
+  // Preferences
+  notifications: boolean
+  dataSharing: boolean
+  offlineMode: boolean
 }
 
 interface OnboardingFormProps {
-  pin: Pin
-  onSubmit: (data: OnboardData) => void
-  onCancel: () => void
+  onComplete: (data: OnboardingData) => void
 }
 
-export function OnboardingForm({ pin, onSubmit, onCancel }: OnboardingFormProps) {
-  const [firstName, setFirstName] = useState("")
-  const [phone, setPhone] = useState("")
-  const [email, setEmail] = useState("")
-  const [ownsCrypto, setOwnsCrypto] = useState(false)
-  const [twitter, setTwitter] = useState("")
-  const [telegram, setTelegram] = useState("")
-  const [reddit, setReddit] = useState("")
-  const [notes, setNotes] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [promoSent, setPromoSent] = useState(false)
-  const [errors, setErrors] = useState<{ firstName?: string; phone?: string; email?: string }>({})
+export function OnboardingForm({ onComplete }: OnboardingFormProps) {
+  const [currentStep, setCurrentStep] = useState(1)
+  const [formData, setFormData] = useState<OnboardingData>({
+    fullName: "",
+    email: "",
+    phone: "",
+    company: "",
+    role: "",
+    primaryTerritory: "",
+    territoryType: "residential",
+    coverageArea: "",
+    product: "",
+    targetAudience: "",
+    salesGoals: "",
+    experience: "intermediate",
+    notifications: true,
+    dataSharing: false,
+    offlineMode: true,
+  })
 
-  const validateForm = () => {
-    const newErrors: { firstName?: string; phone?: string; email?: string } = {}
+  const totalSteps = 4
 
-    // First name is required
-    if (!firstName.trim()) {
-      newErrors.firstName = "First name is required"
-    }
-
-    // Phone validation (optional but must be valid if provided)
-    if (phone && !/^\+?[\d\s\-()]{10,}$/.test(phone.replace(/\s/g, ""))) {
-      newErrors.phone = "Please enter a valid phone number"
-    }
-
-    // Email validation (optional but must be valid if provided)
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      newErrors.email = "Please enter a valid email address"
-    }
-
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+  const updateFormData = (updates: Partial<OnboardingData>) => {
+    setFormData((prev) => ({ ...prev, ...updates }))
   }
 
-  const handleSendPromo = async () => {
-    if (!email) return
-
-    setPromoSent(true)
-    toast({
-      title: "Promo Material Sent!",
-      description: `PulseChain educational materials have been sent to ${email}`,
-    })
-
-    // Simulate API call
-    setTimeout(() => setPromoSent(false), 3000)
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!validateForm()) {
-      return
-    }
-
-    setIsSubmitting(true)
-
-    try {
-      const onboardData: OnboardData = {
-        firstName: firstName.trim(),
-        phone: phone.trim() || undefined,
-        email: email.trim() || undefined,
-        ownsCrypto,
-        socials: {
-          twitter: twitter.trim() || undefined,
-          telegram: telegram.trim() || undefined,
-          reddit: reddit.trim() || undefined,
-        },
-        notes: notes.trim() || undefined,
-        pinId: pin.id,
-        address: pin.address,
-        timestamp: new Date(),
-      }
-
-      // Simulate API call delay
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-
-      onSubmit(onboardData)
-    } catch (error) {
-      console.error("Error submitting onboard form:", error)
-      toast({
-        title: "Error",
-        description: "Failed to submit form. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsSubmitting(false)
+  const nextStep = () => {
+    if (currentStep < totalSteps) {
+      setCurrentStep(currentStep + 1)
     }
   }
 
-  const formatPhoneNumber = (value: string) => {
-    const phoneNumber = value.replace(/\D/g, "")
-    if (phoneNumber.length >= 6) {
-      return `(${phoneNumber.slice(0, 3)}) ${phoneNumber.slice(3, 6)}-${phoneNumber.slice(6, 10)}`
-    } else if (phoneNumber.length >= 3) {
-      return `(${phoneNumber.slice(0, 3)}) ${phoneNumber.slice(3)}`
-    } else {
-      return phoneNumber
+  const prevStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1)
     }
   }
 
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatPhoneNumber(e.target.value)
-    setPhone(formatted)
+  const handleComplete = () => {
+    onComplete(formData)
   }
 
-  const formatSocialHandle = (value: string, platform: string) => {
-    // Remove @ symbol if user adds it
-    let handle = value.replace(/^@/, "")
-
-    // Remove platform URLs if user pastes them
-    if (platform === "twitter") {
-      handle = handle.replace(/^(https?:\/\/)?(www\.)?(twitter\.com\/|x\.com\/)?/, "")
-    } else if (platform === "telegram") {
-      handle = handle.replace(/^(https?:\/\/)?(www\.)?(t\.me\/)?/, "")
-    } else if (platform === "reddit") {
-      handle = handle.replace(/^(https?:\/\/)?(www\.)?(reddit\.com\/u\/)?/, "")
+  const isStepValid = (step: number) => {
+    switch (step) {
+      case 1:
+        return formData.fullName && formData.email && formData.phone
+      case 2:
+        return formData.primaryTerritory && formData.coverageArea
+      case 3:
+        return formData.product && formData.targetAudience
+      case 4:
+        return true
+      default:
+        return false
     }
-
-    return handle
   }
 
-  return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <Card className="w-full max-w-lg bg-white/95 backdrop-blur-sm max-h-[90vh] overflow-y-auto border-purple-200 shadow-xl">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2 text-purple-700 text-lg">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              New Customer Onboarding
-            </CardTitle>
-            <Button variant="ghost" size="sm" onClick={onCancel} className="text-purple-700 hover:bg-purple-50">
-              <X className="h-4 w-4" />
-            </Button>
+  const renderStepIndicator = () => (
+    <div className="flex items-center justify-center mb-8">
+      {Array.from({ length: totalSteps }, (_, i) => i + 1).map((step) => (
+        <div key={step} className="flex items-center">
+          <div
+            className={`
+            w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
+            ${step <= currentStep ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}
+          `}
+          >
+            {step < currentStep ? <CheckCircle className="h-4 w-4" /> : step}
           </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Location Info */}
-            <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-3 rounded-lg border border-purple-200">
-              <div className="flex items-center gap-2 text-sm text-purple-600 mb-1">
-                <MapPin className="h-4 w-4" />
-                <span>Location</span>
-              </div>
-              {pin.propertyName && <p className="font-medium text-sm break-words">{pin.propertyName}</p>}
-              <p className="text-sm text-gray-700 break-words">{pin.address}</p>
-              <Badge variant="outline" className="mt-2 border-purple-200 text-purple-700">
-                New Customer
-              </Badge>
-            </div>
+          {step < totalSteps && (
+            <div
+              className={`
+              w-12 h-1 mx-2
+              ${step < currentStep ? "bg-blue-600" : "bg-gray-200"}
+            `}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  )
 
-            {/* First Name - Required */}
-            <div className="space-y-2">
-              <Label htmlFor="firstName" className="flex items-center gap-2 text-purple-700">
-                <User className="h-4 w-4" />
-                First Name *
-              </Label>
-              <Input
-                id="firstName"
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Enter customer's first name"
-                className={`border-purple-200 focus:border-purple-400 ${errors.firstName ? "border-red-500" : ""}`}
-                required
-              />
-              {errors.firstName && <p className="text-sm text-red-600">{errors.firstName}</p>}
-            </div>
+  const renderStep1 = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <User className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold">Personal Information</h2>
+        <p className="text-gray-600">Let's start with your basic information</p>
+      </div>
 
-            {/* Phone - Optional */}
-            <div className="space-y-2">
-              <Label htmlFor="phone" className="flex items-center gap-2 text-purple-700">
-                <Phone className="h-4 w-4" />
-                Phone Number (Optional)
-              </Label>
-              <Input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={handlePhoneChange}
-                placeholder="(555) 123-4567"
-                className={`border-purple-200 focus:border-purple-400 ${errors.phone ? "border-red-500" : ""}`}
-                maxLength={14}
-              />
-              {errors.phone && <p className="text-sm text-red-600">{errors.phone}</p>}
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="fullName">Full Name *</Label>
+          <Input
+            id="fullName"
+            value={formData.fullName}
+            onChange={(e) => updateFormData({ fullName: e.target.value })}
+            placeholder="John Doe"
+          />
+        </div>
 
-            {/* Email - Optional */}
-            <div className="space-y-2">
-              <Label htmlFor="email" className="flex items-center gap-2 text-purple-700">
-                <Mail className="h-4 w-4" />
-                Email Address (Optional)
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="customer@example.com"
-                className={`border-purple-200 focus:border-purple-400 ${errors.email ? "border-red-500" : ""}`}
-              />
-              {errors.email && <p className="text-sm text-red-600">{errors.email}</p>}
-            </div>
+        <div className="space-y-2">
+          <Label htmlFor="email">Email Address *</Label>
+          <Input
+            id="email"
+            type="email"
+            value={formData.email}
+            onChange={(e) => updateFormData({ email: e.target.value })}
+            placeholder="john@example.com"
+          />
+        </div>
 
-            {/* Owns Crypto - Optional */}
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="ownsCrypto"
-                checked={ownsCrypto}
-                onCheckedChange={(checked) => setOwnsCrypto(checked as boolean)}
-                className="border-purple-300 data-[state=checked]:bg-purple-600"
-              />
-              <Label htmlFor="ownsCrypto" className="flex items-center gap-2 text-sm text-purple-700">
-                <Bitcoin className="h-4 w-4" />
-                Owns Cryptocurrency (Optional)
-              </Label>
-            </div>
+        <div className="space-y-2">
+          <Label htmlFor="phone">Phone Number *</Label>
+          <Input
+            id="phone"
+            type="tel"
+            value={formData.phone}
+            onChange={(e) => updateFormData({ phone: e.target.value })}
+            placeholder="(555) 123-4567"
+          />
+        </div>
 
-            {/* Social Media Handles */}
-            <div className="space-y-3">
-              <Label className="text-sm font-medium text-purple-700">Social Media (Optional)</Label>
+        <div className="space-y-2">
+          <Label htmlFor="company">Company</Label>
+          <Input
+            id="company"
+            value={formData.company}
+            onChange={(e) => updateFormData({ company: e.target.value })}
+            placeholder="Your Company Name"
+          />
+        </div>
+      </div>
 
-              {/* Twitter */}
-              <div className="space-y-1">
-                <Label htmlFor="twitter" className="flex items-center gap-2 text-sm text-purple-600">
-                  <Twitter className="h-4 w-4" />
-                  Twitter/X Handle
-                </Label>
-                <Input
-                  id="twitter"
-                  type="text"
-                  value={twitter}
-                  onChange={(e) => setTwitter(formatSocialHandle(e.target.value, "twitter"))}
-                  placeholder="username"
-                  className="border-purple-200 focus:border-purple-400"
-                />
-              </div>
+      <div className="space-y-2">
+        <Label htmlFor="role">Role</Label>
+        <Select value={formData.role} onValueChange={(value) => updateFormData({ role: value })}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select your role" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="sales-rep">Sales Representative</SelectItem>
+            <SelectItem value="sales-manager">Sales Manager</SelectItem>
+            <SelectItem value="team-lead">Team Lead</SelectItem>
+            <SelectItem value="independent">Independent Contractor</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
 
-              {/* Telegram */}
-              <div className="space-y-1">
-                <Label htmlFor="telegram" className="flex items-center gap-2 text-sm text-purple-600">
-                  <MessageCircle className="h-4 w-4" />
-                  Telegram Handle
-                </Label>
-                <Input
-                  id="telegram"
-                  type="text"
-                  value={telegram}
-                  onChange={(e) => setTelegram(formatSocialHandle(e.target.value, "telegram"))}
-                  placeholder="username"
-                  className="border-purple-200 focus:border-purple-400"
-                />
-              </div>
+  const renderStep2 = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <MapPin className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold">Territory Setup</h2>
+        <p className="text-gray-600">Define your sales territory</p>
+      </div>
 
-              {/* Reddit */}
-              <div className="space-y-1">
-                <Label htmlFor="reddit" className="flex items-center gap-2 text-sm text-purple-600">
-                  <MessageCircle className="h-4 w-4" />
-                  Reddit Username
-                </Label>
-                <Input
-                  id="reddit"
-                  type="text"
-                  value={reddit}
-                  onChange={(e) => setReddit(formatSocialHandle(e.target.value, "reddit"))}
-                  placeholder="username"
-                  className="border-purple-200 focus:border-purple-400"
-                />
-              </div>
-            </div>
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="primaryTerritory">Primary Territory Name *</Label>
+          <Input
+            id="primaryTerritory"
+            value={formData.primaryTerritory}
+            onChange={(e) => updateFormData({ primaryTerritory: e.target.value })}
+            placeholder="Downtown District, North Side, etc."
+          />
+        </div>
 
-            {/* Send Promo Material Button */}
-            <div className="space-y-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full bg-transparent border-purple-200 text-purple-700 hover:bg-purple-50 text-sm"
-                onClick={handleSendPromo}
-                disabled={!email || promoSent}
-              >
-                <Send className="h-4 w-4 mr-2" />
-                {promoSent ? "PulseChain Materials Sent!" : "Send PulseChain Materials"}
-              </Button>
-              {!email && (
-                <p className="text-xs text-purple-600">Email address required to send educational materials</p>
-              )}
-            </div>
+        <div className="space-y-2">
+          <Label htmlFor="territoryType">Territory Type *</Label>
+          <Select
+            value={formData.territoryType}
+            onValueChange={(value: "residential" | "commercial" | "mixed") => updateFormData({ territoryType: value })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="residential">Residential</SelectItem>
+              <SelectItem value="commercial">Commercial</SelectItem>
+              <SelectItem value="mixed">Mixed (Residential & Commercial)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-            {/* Notes */}
-            <div className="space-y-2">
-              <Label htmlFor="notes" className="flex items-center gap-2 text-purple-700">
-                <StickyNote className="h-4 w-4" />
-                Add Note (Optional)
-              </Label>
-              <Textarea
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Add any notes about this customer or interaction..."
-                rows={3}
-                className="resize-none border-purple-200 focus:border-purple-400"
-              />
-            </div>
+        <div className="space-y-2">
+          <Label htmlFor="coverageArea">Coverage Area Description *</Label>
+          <Textarea
+            id="coverageArea"
+            value={formData.coverageArea}
+            onChange={(e) => updateFormData({ coverageArea: e.target.value })}
+            placeholder="Describe your coverage area (neighborhoods, zip codes, landmarks, etc.)"
+            rows={3}
+          />
+        </div>
+      </div>
+    </div>
+  )
 
-            {/* Form Actions */}
-            <div className="flex gap-3 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onCancel}
-                className="flex-1 bg-transparent border-purple-200 text-purple-700 hover:bg-purple-50 text-sm"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-sm"
-              >
-                {isSubmitting ? "Processing..." : "Onboard Now!"}
-              </Button>
-            </div>
-          </form>
+  const renderStep3 = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <Target className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold">Sales Information</h2>
+        <p className="text-gray-600">Tell us about what you're selling</p>
+      </div>
 
-          {/* Form Info */}
-          <div className="mt-4 p-3 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-purple-200">
-            <p className="text-xs text-purple-800">
-              <strong>Note:</strong> Only first name is required. All other fields are optional but help with PulseChain
-              education follow-up and engagement.
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="product">Product/Service *</Label>
+          <Input
+            id="product"
+            value={formData.product}
+            onChange={(e) => updateFormData({ product: e.target.value })}
+            placeholder="Solar panels, Home security, Insurance, etc."
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="targetAudience">Target Audience *</Label>
+          <Textarea
+            id="targetAudience"
+            value={formData.targetAudience}
+            onChange={(e) => updateFormData({ targetAudience: e.target.value })}
+            placeholder="Describe your ideal customers (homeowners, business owners, demographics, etc.)"
+            rows={3}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="salesGoals">Sales Goals</Label>
+          <Textarea
+            id="salesGoals"
+            value={formData.salesGoals}
+            onChange={(e) => updateFormData({ salesGoals: e.target.value })}
+            placeholder="What are your sales goals? (daily visits, monthly targets, etc.)"
+            rows={2}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="experience">Experience Level</Label>
+          <Select
+            value={formData.experience}
+            onValueChange={(value: "beginner" | "intermediate" | "advanced") => updateFormData({ experience: value })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="beginner">Beginner (0-1 years)</SelectItem>
+              <SelectItem value="intermediate">Intermediate (1-5 years)</SelectItem>
+              <SelectItem value="advanced">Advanced (5+ years)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderStep4 = () => (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <Building className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold">Preferences</h2>
+        <p className="text-gray-600">Customize your app experience</p>
+      </div>
+
+      <div className="space-y-6">
+        <div className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="notifications"
+              checked={formData.notifications}
+              onCheckedChange={(checked) => updateFormData({ notifications: !!checked })}
+            />
+            <Label
+              htmlFor="notifications"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Enable push notifications for follow-ups and reminders
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="offlineMode"
+              checked={formData.offlineMode}
+              onCheckedChange={(checked) => updateFormData({ offlineMode: !!checked })}
+            />
+            <Label
+              htmlFor="offlineMode"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Enable offline mode for areas with poor connectivity
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="dataSharing"
+              checked={formData.dataSharing}
+              onCheckedChange={(checked) => updateFormData({ dataSharing: !!checked })}
+            />
+            <Label
+              htmlFor="dataSharing"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Share anonymous usage data to help improve the app
+            </Label>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 p-4 rounded-lg">
+          <h3 className="font-medium mb-2">Setup Summary</h3>
+          <div className="space-y-1 text-sm text-gray-600">
+            <p>
+              <strong>Name:</strong> {formData.fullName}
+            </p>
+            <p>
+              <strong>Territory:</strong> {formData.primaryTerritory}
+            </p>
+            <p>
+              <strong>Product:</strong> {formData.product}
+            </p>
+            <p>
+              <strong>Experience:</strong> {formData.experience}
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-2xl mx-auto px-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-center">Welcome to PulseChain Education Tracker</CardTitle>
+            {renderStepIndicator()}
+          </CardHeader>
+          <CardContent>
+            {currentStep === 1 && renderStep1()}
+            {currentStep === 2 && renderStep2()}
+            {currentStep === 3 && renderStep3()}
+            {currentStep === 4 && renderStep4()}
+
+            <div className="flex justify-between mt-8">
+              <Button variant="outline" onClick={prevStep} disabled={currentStep === 1}>
+                Previous
+              </Button>
+
+              {currentStep < totalSteps ? (
+                <Button onClick={nextStep} disabled={!isStepValid(currentStep)}>
+                  Next
+                </Button>
+              ) : (
+                <Button onClick={handleComplete} className="bg-blue-600 hover:bg-blue-700">
+                  Complete Setup
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
