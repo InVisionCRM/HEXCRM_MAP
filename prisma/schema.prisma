@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Territory {
+  id          String   @id @default(cuid())
+  name        String
+  color       String
+  coordinates Json     // Array of {lat: number, lng: number} objects
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([createdAt], map: "idx_territories_created_at")
+  @@map("territories")
+}
+
+model Pin {
+  id           String     @id
+  lat          Float
+  lng          Float
+  address      String
+  placeId      String?    @map("place_id")
+  propertyName String?    @map("property_name")
+  status       String?    @default("new")
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  // Relations
+  followUps    FollowUp[]
+  customer     Customer?
+
+  @@index([createdAt], map: "idx_pins_created_at")
+  @@index([status], map: "idx_pins_status")
+  @@map("pins")
+}
+
+model Customer {
+  id         String   @id @default(cuid())
+  pinId      String   @unique @map("pin_id")
+  firstName  String   @map("first_name")
+  phone      String?
+  email      String?
+  ownsCrypto Boolean? @default(false) @map("owns_crypto")
+  socials    Json?
+  notes      String?
+  address    String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  pin        Pin      @relation(fields: [pinId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt], map: "idx_customers_created_at")
+  @@index([pinId], map: "idx_customers_pin_id")
+  @@map("customers")
+}
+
+model FollowUp {
+  id           String   @id @default(cuid())
+  pinId        String   @map("pin_id")
+  address      String
+  propertyName String?  @map("property_name")
+  date         String   // Keeping as string to match your interface
+  time         String   // Keeping as string to match your interface
+  notes        String?
+  status       String?  @default("scheduled") // scheduled, completed, cancelled
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  pin          Pin      @relation(fields: [pinId], references: [id], onDelete: Cascade)
+
+  @@index([date], map: "idx_follow_ups_date")
+  @@index([pinId], map: "idx_follow_ups_pin_id")
+  @@index([status], map: "idx_follow_ups_status")
+  @@map("follow_ups")
+}

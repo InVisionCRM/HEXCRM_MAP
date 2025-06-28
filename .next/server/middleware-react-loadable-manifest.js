@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"lib/customer-storage.ts -> ./actions/pin-actions\":{\"id\":\"lib/customer-storage.ts -> ./actions/pin-actions\",\"files\":[]}}"
