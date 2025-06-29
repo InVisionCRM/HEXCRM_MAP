@@ -1,4 +1,4 @@
-import { PrismaClient } from './generated/prisma'
+import { PrismaClient } from '@prisma/client'
 import type { Territory, Coordinate, Pin, Customer, FollowUp, FollowUpData } from './types'
 
 // Global variable to store the Prisma client in development
@@ -380,4 +380,4 @@ export const customerDb = new CustomerDatabase()
 export const followUpDb = new FollowUpDatabase()
 
 // Export Prisma types for use in other parts of the app
-export type { Territory as PrismaTerritory, FollowUp as PrismaFollowUp } from './generated/prisma' 
+export type { Territory as PrismaTerritory, FollowUp as PrismaFollowUp, Customer as PrismaCustomer, Pin as PrismaPin } from '@prisma/client' 

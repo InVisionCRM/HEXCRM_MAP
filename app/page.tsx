@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -86,45 +86,17 @@ declare global {
   }
 }
 
-export default function PulseChainEducationTracker() {
+// Component that handles search params - needs to be wrapped in Suspense
+function SearchParamsHandler({ 
+  setShowCalendarView, 
+  setShowTerritoryManager, 
+  setIsModalTransitioning 
+}: {
+  setShowCalendarView: (show: boolean) => void
+  setShowTerritoryManager: (show: boolean) => void
+  setIsModalTransitioning: (transitioning: boolean) => void
+}) {
   const searchParams = useSearchParams()
-  const router = useRouter()
-  const mapRef = useRef<HTMLDivElement>(null)
-  const [map, setMap] = useState<any>(null)
-  const [pins, setPins] = useState<Pin[]>([])
-  const [markers, setMarkers] = useState<MarkerRef[]>([])
-  const [selectedPin, setSelectedPin] = useState<Pin | null>(null)
-  const [streetViewUrl, setStreetViewUrl] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [isGpsLoading, setIsGpsLoading] = useState(false)
-  const [usedAddresses, setUsedAddresses] = useState<Set<string>>(new Set())
-  const [mapError, setMapError] = useState<string>("")
-  const [debugInfo, setDebugInfo] = useState<string>("")
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
-  const [showOnboardForm, setShowOnboardForm] = useState(false)
-  const [showFollowUpModal, setShowFollowUpModal] = useState(false)
-  const [showCalendarView, setShowCalendarView] = useState(false)
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [isModalTransitioning, setIsModalTransitioning] = useState(false)
-  const [currentOnboardData, setCurrentOnboardData] = useState<OnboardData | null>(null)
-  const [onboardedCustomers, setOnboardedCustomers] = useState<OnboardData[]>([])
-  const [followUps, setFollowUps] = useState<FollowUpData[]>([])
-  const [showMobileMenu, setShowMobileMenu] = useState(false)
-
-  const [territories, setTerritories] = useState<Territory[]>([])
-  const [territoryPolygons, setTerritoryPolygons] = useState<any[]>([])
-  const [visibleTerritories, setVisibleTerritories] = useState<Set<string>>(new Set())
-  const [showTerritoryManager, setShowTerritoryManager] = useState(false)
-  const [showTerritoryForm, setShowTerritoryForm] = useState(false)
-  const [pendingTerritoryCoords, setPendingTerritoryCoords] = useState<Array<{ lat: number; lng: number }>>([])
-  const [drawingManager, setDrawingManager] = useState<any>(null)
-  const [isDrawingMode, setIsDrawingMode] = useState(false)
-  const [mapsLoaded, setMapsLoaded] = useState(false)
-
-  const { isOnline } = usePWA()
-
-  // Austin, Texas coordinates
-  const austinCenter = { lat: 30.2672, lng: -97.7431 }
 
   // Check URL parameters to open calendar or territory views (mutually exclusive)
   useEffect(() => {
@@ -148,7 +120,60 @@ export default function PulseChainEducationTracker() {
       setShowCalendarView(false)
       setShowTerritoryManager(false)
     }
-  }, [searchParams])
+  }, [searchParams, setShowCalendarView, setShowTerritoryManager, setIsModalTransitioning])
+
+  return null // This component doesn't render anything
+}
+
+function PulseChainEducationTrackerContent({
+  showCalendarView,
+  setShowCalendarView,
+  showTerritoryManager,
+  setShowTerritoryManager,
+  isModalTransitioning,
+  setIsModalTransitioning
+}: {
+  showCalendarView: boolean
+  setShowCalendarView: (show: boolean) => void
+  showTerritoryManager: boolean
+  setShowTerritoryManager: (show: boolean) => void
+  isModalTransitioning: boolean
+  setIsModalTransitioning: (transitioning: boolean) => void
+}) {
+  const router = useRouter()
+  const mapRef = useRef<HTMLDivElement>(null)
+  const [map, setMap] = useState<any>(null)
+  const [pins, setPins] = useState<Pin[]>([])
+  const [markers, setMarkers] = useState<MarkerRef[]>([])
+  const [selectedPin, setSelectedPin] = useState<Pin | null>(null)
+  const [streetViewUrl, setStreetViewUrl] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [isGpsLoading, setIsGpsLoading] = useState(false)
+  const [usedAddresses, setUsedAddresses] = useState<Set<string>>(new Set())
+  const [mapError, setMapError] = useState<string>("")
+  const [debugInfo, setDebugInfo] = useState<string>("")
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [showOnboardForm, setShowOnboardForm] = useState(false)
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [currentOnboardData, setCurrentOnboardData] = useState<OnboardData | null>(null)
+  const [onboardedCustomers, setOnboardedCustomers] = useState<OnboardData[]>([])
+  const [followUps, setFollowUps] = useState<FollowUpData[]>([])
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
+
+  const [territories, setTerritories] = useState<Territory[]>([])
+  const [territoryPolygons, setTerritoryPolygons] = useState<any[]>([])
+  const [visibleTerritories, setVisibleTerritories] = useState<Set<string>>(new Set())
+  const [showTerritoryForm, setShowTerritoryForm] = useState(false)
+  const [pendingTerritoryCoords, setPendingTerritoryCoords] = useState<Array<{ lat: number; lng: number }>>([])
+  const [drawingManager, setDrawingManager] = useState<any>(null)
+  const [isDrawingMode, setIsDrawingMode] = useState(false)
+  const [mapsLoaded, setMapsLoaded] = useState(false)
+
+  const { isOnline } = usePWA()
+
+  // Austin, Texas coordinates
+  const austinCenter = { lat: 30.2672, lng: -97.7431 }
 
   useEffect(() => {
     // Initialize offline storage and load cached data
@@ -1501,7 +1526,7 @@ export default function PulseChainEducationTracker() {
             onClose={() => {
               setShowCalendarView(false)
               // Clear the view parameter from URL
-              const params = new URLSearchParams(searchParams)
+              const params = new URLSearchParams(window.location.search)
               params.delete('view')
               const newUrl = params.toString() ? `/?${params.toString()}` : '/'
               router.replace(newUrl)
@@ -1577,7 +1602,7 @@ export default function PulseChainEducationTracker() {
           onClose={() => {
             setShowTerritoryManager(false)
             // Clear the view parameter from URL
-            const params = new URLSearchParams(searchParams)
+            const params = new URLSearchParams(window.location.search)
             params.delete('view')
             const newUrl = params.toString() ? `/?${params.toString()}` : '/'
             router.replace(newUrl)
@@ -1603,6 +1628,32 @@ export default function PulseChainEducationTracker() {
 
       {/* PWA Install Prompt */}
       <PWAInstallPrompt />
+    </div>
+  )
+}
+
+export default function PulseChainEducationTracker() {
+  const [showCalendarView, setShowCalendarView] = useState(false)
+  const [showTerritoryManager, setShowTerritoryManager] = useState(false)
+  const [isModalTransitioning, setIsModalTransitioning] = useState(false)
+
+  return (
+    <div>
+      <Suspense fallback={<div>Loading...</div>}>
+        <SearchParamsHandler 
+          setShowCalendarView={setShowCalendarView} 
+          setShowTerritoryManager={setShowTerritoryManager} 
+          setIsModalTransitioning={setIsModalTransitioning} 
+        />
+      </Suspense>
+      <PulseChainEducationTrackerContent 
+        showCalendarView={showCalendarView}
+        setShowCalendarView={setShowCalendarView}
+        showTerritoryManager={showTerritoryManager}
+        setShowTerritoryManager={setShowTerritoryManager}
+        isModalTransitioning={isModalTransitioning}
+        setIsModalTransitioning={setIsModalTransitioning}
+      />
     </div>
   )
 }
