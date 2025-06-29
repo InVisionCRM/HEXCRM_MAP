@@ -353,7 +353,10 @@ export default function PulseChainEducationTracker() {
         fullscreenControl: false, // Disable fullscreen control
         streetViewControl: false, // Disable street view control
         zoomControl: true, // Keep zoom controls
-        rotateControl: false, // Disable rotation control buttons (we want touch controls only)
+        rotateControl: true, // Enable native rotation control buttons
+        rotateControlOptions: {
+          position: window.google.maps.ControlPosition.TOP_LEFT,
+        },
         tilt: 0, // Disable auto-tilt
         minZoom: 3, // Minimum zoom level
         maxZoom: 22, // Maximum zoom level to prevent excessive zooming
