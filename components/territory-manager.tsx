@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
 import { X, MapPin, Edit3, Trash2, Save, Square, Eye, EyeOff } from "lucide-react"
 import type { Territory } from "@/lib/territory-storage"
-import { GlowingEffect } from "@/components/ui/glowing-effect"
+import GlowingEffect from "@/components/ui/glowing-effect"
 
 interface TerritoryManagerProps {
   territories: Territory[]

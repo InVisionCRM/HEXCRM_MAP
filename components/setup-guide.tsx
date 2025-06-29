@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ExternalLink, Key, Settings, Globe } from "lucide-react"
-import { GlowingEffect } from "@/components/ui/glowing-effect"
+import GlowingEffect from "@/components/ui/glowing-effect"
 
 export function SetupGuide() {
   return (

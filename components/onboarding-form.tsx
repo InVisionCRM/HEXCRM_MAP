@@ -23,7 +23,9 @@ import {
   MessageCircle,
   Send,
   StickyNote,
+  Users,
 } from "lucide-react"
+import GlowingEffect from "@/components/ui/glowing-effect"
 
 interface Pin {
   id: string

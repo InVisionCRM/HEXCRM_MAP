@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { User, Phone, Mail, Bitcoin, Twitter, MessageCircle, MapPin, FileText, Calendar } from "lucide-react";
-import { GlowingEffect } from "@/components/ui/glowing-effect";
+import GlowingEffect from "@/components/ui/glowing-effect";
 import { customerStorage } from "@/lib/customer-storage";
 import type { Customer } from "@/lib/types";
 

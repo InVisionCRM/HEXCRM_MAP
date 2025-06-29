@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/hooks/use-toast"
 import { Calendar, Clock, X, MapPin, Save } from "lucide-react"
-import { GlowingEffect } from "@/components/ui/glowing-effect"
+import GlowingEffect from "@/components/ui/glowing-effect"
 
 interface Pin {
   id: string

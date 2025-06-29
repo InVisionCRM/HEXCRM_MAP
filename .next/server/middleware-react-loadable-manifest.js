@@ -1,1 +1,0 @@
-self.__REACT_LOADABLE_MANIFEST='{"lib/customer-storage.ts -> ./actions/pin-actions":{"id":1935,"files":["static/chunks/935.30cc60155871301e.js"]}}';

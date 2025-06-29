@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ChevronLeft, ChevronRight, X, Calendar, Clock, MapPin, ArrowLeft } from "lucide-react"
-import { GlowingEffect } from "@/components/ui/glowing-effect"
+import GlowingEffect from "@/components/ui/glowing-effect"
 
 interface FollowUpData {
   id: string

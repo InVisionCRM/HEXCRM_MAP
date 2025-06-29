@@ -24,7 +24,7 @@ import { OnboardingForm } from "@/components/onboarding-form"
 import { FollowUpModal } from "@/components/follow-up-modal"
 import { CalendarView } from "@/components/calendar-view"
 import { PWAInstallPrompt } from "@/components/pwa-install-prompt"
-import { GlowingEffect } from "@/components/ui/glowing-effect"
+import GlowingEffect from "@/components/ui/glowing-effect"
 import { getGoogleMapsConfig, generateStreetViewUrl } from "@/lib/maps-server"
 import { offlineStorage } from "@/lib/offline-storage"
 import { usePWA } from "@/hooks/use-pwa"
@@ -385,9 +385,6 @@ function PulseChainEducationTrackerContent({
         tilt: 0, // Disable auto-tilt
         minZoom: 3, // Minimum zoom level
         maxZoom: 22, // Maximum zoom level to prevent excessive zooming
-        restriction: {
-          strictBounds: false,
-        },
         styles: [
           {
             featureType: "all",
